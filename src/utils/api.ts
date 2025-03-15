@@ -369,62 +369,6 @@ export async function makeWordwareRequest<T = WordwareRunResponse>(
  */
 export async function fetchAppDetails(appId: string): Promise<AppDetails | null> {
   try {
-    // Special case for test tool
-    if (appId === "mcp_test_tool_id") {
-      safeLog('info', `Returning hardcoded test tool details for app ID: ${appId}`);
-      
-      const testToolDetails: AppDetails = {
-        data: {
-          id: "mcp_test_tool_id",
-          type: "app",
-          attributes: {
-            title: "mcp__Test_Tool_integration",
-            description: "Simple test tool with multiple parameters",
-            inputSchema: {
-              type: "object",
-              additionalProperties: false,
-              properties: {
-                title: { type: "string" },
-                body: { type: "string" },
-                labels: { type: "array", items: { type: "string" } }
-              },
-              required: ["title", "body", "labels"]
-            },
-            outputSchema: {
-              type: "object",
-              additionalProperties: true,
-              properties: {
-                content: {
-                  type: "array",
-                  items: {
-                    type: "object"
-                  }
-                }
-              },
-              required: ["content"]
-            }
-          },
-          links: {
-            self: "https://api.wordware.ai/v1/apps/mcp_test_tool_id"
-          },
-          relationships: {
-            versions: {
-              links: {
-                related: "https://api.wordware.ai/v1/apps/mcp_test_tool_id/versions"
-              }
-            },
-            latestVersion: {
-              links: {
-                related: "https://api.wordware.ai/v1/apps/mcp_test_tool_id/latest-version"
-              }
-            }
-          }
-        }
-      };
-      
-      return testToolDetails;
-    }
-    
     safeLog('info', `Fetching app details for app ID: ${appId}`);
     
     const response = await fetch(`https://api.wordware.ai/v1/apps/${appId}`, {
@@ -462,30 +406,6 @@ export async function fetchAppDetails(appId: string): Promise<AppDetails | null>
  */
 export async function executeApp(appId: string, inputs: Record<string, any>): Promise<any> {
   try {
-    // Special case for test tool
-    if (appId === "mcp_test_tool_id") {
-      safeLog('info', `Executing test tool directly for app ID: ${appId}`, { inputs });
-      
-      // Import the test tool handler dynamically to avoid circular dependencies
-      const { testToolHandler } = await import('../tools/testTool.js');
-      
-      try {
-        // Call the test tool handler directly with the new parameter structure
-        const result = await testToolHandler({ 
-          title: inputs.title || "Default Title",
-          body: inputs.body || "Default Body",
-          labels: Array.isArray(inputs.labels) ? inputs.labels : ["default-label"]
-        });
-        safeLog('info', `Test tool execution successful`, { result });
-        return result;
-      } catch (error) {
-        safeLog('error', `Error executing test tool`, { error });
-        return {
-          error: `Error executing test tool: ${error instanceof Error ? error.message : String(error)}`
-        };
-      }
-    }
-    
     safeLog('info', `Executing app with ID: ${appId}`, { inputs });
     
     // Ensure inputs is a valid object
