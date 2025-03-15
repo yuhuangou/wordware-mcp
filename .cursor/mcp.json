@@ -3,7 +3,7 @@
     "wordware": {
       "transport": "stdio",
       "command": "node",
-      "args": ["/Users/richardou/Desktop/Developer/wordware-mcp/src/index-sdk.js"],
+      "args": ["/ABSOLUTE/PATH/TO/PARENT/FOLDER/wordware-mcp/build/index.js"],
       "description": "Wordware MCP Server (stdio)"
     }
   }
