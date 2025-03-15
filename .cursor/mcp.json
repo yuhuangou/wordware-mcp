@@ -1,0 +1,10 @@
+{
+  "servers": {
+    "wordware": {
+      "transport": "stdio",
+      "command": "node",
+      "args": ["/Users/richardou/Desktop/Developer/wordware-mcp/src/index-sdk.js"],
+      "description": "Wordware MCP Server (stdio)"
+    }
+  }
+} 
