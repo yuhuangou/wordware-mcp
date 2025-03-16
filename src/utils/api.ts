@@ -1,4 +1,5 @@
 import { createSubLogger } from "./logger.js";
+import { logApiResponse } from "./fileLogger.js";
 
 const log = createSubLogger("api");
 
@@ -382,6 +383,16 @@ export async function fetchAppDetails(appId: string): Promise<AppDetails | null>
     if (!response.ok) {
       const errorText = await response.text();
       safeLog('error', `Failed to fetch app details: ${response.status} ${response.statusText}`, { error: errorText });
+      
+      // Log the error response to a file
+      logApiResponse(appId, {
+        status: response.status,
+        statusText: response.statusText,
+        error: errorText,
+        timestamp: new Date().toISOString(),
+        endpoint: `https://api.wordware.ai/v1/apps/${appId}`
+      });
+      
       return null;
     }
     
@@ -391,9 +402,27 @@ export async function fetchAppDetails(appId: string): Promise<AppDetails | null>
       appId 
     });
     
+    // Log the successful response to a file
+    logApiResponse(appId, {
+      success: true,
+      timestamp: new Date().toISOString(),
+      endpoint: `https://api.wordware.ai/v1/apps/${appId}`,
+      appDetails
+    });
+    
     return appDetails;
   } catch (error) {
     safeLog('error', `Error fetching app details`, { appId, error });
+    
+    // Log the error to a file
+    logApiResponse(appId, {
+      success: false,
+      timestamp: new Date().toISOString(),
+      endpoint: `https://api.wordware.ai/v1/apps/${appId}`,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined
+    });
+    
     return null;
   }
 }
@@ -427,6 +456,14 @@ export async function executeApp(appId: string, inputs: Record<string, any>): Pr
       appId
     });
     
+    // Log the request payload to a file
+    logApiResponse(appId, {
+      type: 'execution_request',
+      timestamp: new Date().toISOString(),
+      endpoint: `https://api.wordware.ai/v1/apps/${appId}/runs`,
+      requestBody
+    });
+    
     const response = await fetch(`https://api.wordware.ai/v1/apps/${appId}/runs`, {
       method: 'POST',
       headers: {
@@ -442,12 +479,33 @@ export async function executeApp(appId: string, inputs: Record<string, any>): Pr
         error: errorText,
         appId
       });
+      
+      // Log the error response to a file
+      logApiResponse(appId, {
+        type: 'execution_error',
+        status: response.status,
+        statusText: response.statusText,
+        error: errorText,
+        timestamp: new Date().toISOString(),
+        endpoint: `https://api.wordware.ai/v1/apps/${appId}/runs`
+      });
+      
       return { error: `API error: ${response.status} ${response.statusText}` };
     }
     
     const result = await response.json() as RunResponse;
     safeLog('info', `Successfully started app execution`, { 
       appId,
+      runId: result.data?.id,
+      status: result.data?.attributes?.status
+    });
+    
+    // Log the successful response to a file
+    logApiResponse(appId, {
+      type: 'execution_response',
+      success: true,
+      timestamp: new Date().toISOString(),
+      endpoint: `https://api.wordware.ai/v1/apps/${appId}/runs`,
       runId: result.data?.id,
       status: result.data?.attributes?.status
     });
@@ -459,6 +517,15 @@ export async function executeApp(appId: string, inputs: Record<string, any>): Pr
         runId: result.data?.id,
         outputKeys: Object.keys(result.data.attributes.outputs)
       });
+      
+      // Log the outputs to a file
+      logApiResponse(appId, {
+        type: 'execution_completed',
+        timestamp: new Date().toISOString(),
+        runId: result.data?.id,
+        outputs: result.data.attributes.outputs
+      });
+      
       return result.data.attributes.outputs;
     }
     
@@ -470,6 +537,17 @@ export async function executeApp(appId: string, inputs: Record<string, any>): Pr
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined
     });
+    
+    // Log the error to a file
+    logApiResponse(appId, {
+      type: 'execution_exception',
+      success: false,
+      timestamp: new Date().toISOString(),
+      endpoint: `https://api.wordware.ai/v1/apps/${appId}/runs`,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined
+    });
+    
     return { error: `Execution error: ${error instanceof Error ? error.message : String(error)}` };
   }
 }
@@ -506,6 +584,18 @@ async function waitForRunCompletion(runId: string): Promise<any> {
           error: errorText,
           attempt: attempt + 1 
         });
+        
+        // Log the polling error to a file
+        logApiResponse(runId, {
+          type: 'polling_error',
+          status: response.status,
+          statusText: response.statusText,
+          error: errorText,
+          timestamp: new Date().toISOString(),
+          endpoint: `https://api.wordware.ai/v1/runs/${runId}`,
+          attempt: attempt + 1
+        });
+        
         continue; // Continue trying if there's an error
       }
       
@@ -514,42 +604,75 @@ async function waitForRunCompletion(runId: string): Promise<any> {
       
       safeLog('debug', `Run status: ${status}`, { runId, attempt: attempt + 1 });
       
-      if (status === 'completed') {
-        const outputs = result.data.attributes.outputs;
+      // Log the polling result to a file
+      logApiResponse(runId, {
+        type: 'polling_response',
+        timestamp: new Date().toISOString(),
+        endpoint: `https://api.wordware.ai/v1/runs/${runId}`,
+        attempt: attempt + 1,
+        status,
+        hasOutputs: !!result.data?.attributes?.outputs
+      });
+      
+      if (status === 'completed' && result.data?.attributes?.outputs) {
         safeLog('info', `Run completed successfully`, { 
-          runId,
-          outputKeys: outputs ? Object.keys(outputs) : 'none'
+          runId, 
+          outputKeys: Object.keys(result.data.attributes.outputs || {})
         });
         
-        if (outputs) {
-          safeLog('debug', `Run outputs`, { 
-            runId,
-            outputs: JSON.stringify(outputs)
-          });
-          
-          // Return the outputs directly
-          return outputs;
-        } else {
-          safeLog('warn', `Run completed but no outputs found`, { runId });
-          return { error: "Run completed but no outputs were returned" };
-        }
-      } else if (status === 'error' || status === 'failed') {
-        const error = result.data.attributes.error;
-        safeLog('error', `Run failed with error`, { 
-          runId,
-          error
+        // Log the successful completion to a file
+        logApiResponse(runId, {
+          type: 'polling_completed',
+          timestamp: new Date().toISOString(),
+          endpoint: `https://api.wordware.ai/v1/runs/${runId}`,
+          attempt: attempt + 1,
+          outputs: result.data.attributes.outputs
         });
-        return { error: error || "Unknown error occurred during run" };
+        
+        return result.data.attributes.outputs;
+      } else if (status === 'failed') {
+        safeLog('error', `Run failed`, { runId });
+        
+        // Log the failure to a file
+        logApiResponse(runId, {
+          type: 'polling_failed',
+          timestamp: new Date().toISOString(),
+          endpoint: `https://api.wordware.ai/v1/runs/${runId}`,
+          attempt: attempt + 1,
+          status: 'failed'
+        });
+        
+        return { error: 'Run failed' };
       }
-      
-      // If the run is still processing, continue polling
-      safeLog('info', `Run still processing (attempt ${attempt + 1}/30)`, { runId });
     }
     
-    safeLog('error', `Timed out waiting for run completion`, { runId });
-    return { error: "Timed out waiting for run completion" };
+    safeLog('error', `Run timed out`, { runId });
+    
+    // Log the timeout to a file
+    logApiResponse(runId, {
+      type: 'polling_timeout',
+      timestamp: new Date().toISOString(),
+      endpoint: `https://api.wordware.ai/v1/runs/${runId}`,
+      message: 'Run timed out after 30 attempts (60 seconds)'
+    });
+    
+    return { error: 'Run timed out' };
   } catch (error) {
-    safeLog('error', `Error waiting for run completion`, { runId, error });
+    safeLog('error', `Error waiting for run completion`, { 
+      runId, 
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined
+    });
+    
+    // Log the error to a file
+    logApiResponse(runId, {
+      type: 'polling_exception',
+      timestamp: new Date().toISOString(),
+      endpoint: `https://api.wordware.ai/v1/runs/${runId}`,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined
+    });
+    
     return { error: `Error waiting for run completion: ${error instanceof Error ? error.message : String(error)}` };
   }
 }

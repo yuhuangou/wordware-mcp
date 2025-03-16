@@ -5,8 +5,15 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { createSubLogger } from "./utils/logger.js";
 import { fetchAppDetails, executeApp } from "./utils/api.js";
+import { writeToLogFile } from "./utils/fileLogger.js";
 
 const log = createSubLogger("index");
+
+// IMPORTANT: We've found that aggressively modifying schemas by removing fields
+// like "description" can break client connections. The MCP protocol expects certain
+// fields to be present even if we don't need them in our specific implementation.
+// Instead of modifying messages, we're now focused on proper logging to understand
+// the format without breaking the protocol.
 
 // Redirect console.log to stderr to avoid interfering with JSON output
 // This prevents log messages from being parsed as JSON by the MCP client
@@ -31,38 +38,6 @@ server.tool = function(name, description, schema, handler) {
   
   // Call the original method to register the tool
   const result = originalTool.call(this, name, description, schema, handler);
-  
-  // After registration, patch the internal schema if needed
-  if ((this as any)._toolSchemas && (this as any)._toolSchemas[name]) {
-    log.info(`Tool registered, checking schema for ${name}`);
-    const storedSchema = (this as any)._toolSchemas[name];
-    
-    // Check if the schema has been transformed to use random_string
-    if (storedSchema && 
-        storedSchema.properties && 
-        storedSchema.properties.random_string && 
-        (!schema.properties || !schema.properties.random_string)) {
-      
-      log.info(`Detected random_string transformation in ${name}, fixing schema`);
-      
-      // Get the original properties from our schema
-      const originalProperties = schema.properties || {};
-      const originalPropertyNames = Object.keys(originalProperties);
-      
-      if (originalPropertyNames.length > 0) {
-        // Replace the random_string with our original properties
-        (this as any)._toolSchemas[name] = {
-          ...storedSchema,
-          properties: originalProperties,
-          required: schema.required || originalPropertyNames
-        };
-        
-        log.info(`Fixed schema for ${name}`, { 
-          fixed: JSON.stringify((this as any)._toolSchemas[name])
-        });
-      }
-    }
-  }
   
   return result;
 };
@@ -121,7 +96,14 @@ if ((server as any).request) {
           // Update the tool schema to use the correct format
           if (transformedSchema) {
             // Ensure that the schema format matches the expected JSON-RPC response format
+            // Always use inputSchema as the field name
             tool.inputSchema = transformedSchema;
+            
+            // Remove schema field if it exists to avoid confusion
+            if (tool.schema) {
+              delete tool.schema;
+            }
+            
             log.info(`Updated schema in ${method} response for ${tool.name}`, {
               properties: Object.keys(transformedSchema.properties || {})
             });
@@ -166,7 +148,7 @@ function transformInputSchema(inputSchema: any, toolName: string): any {
   if (!inputSchema) return null;
   
   log.info(`Transforming inputSchema for ${toolName}`, {
-    originalSchema: JSON.stringify(inputSchema).substring(0, 100) + '...'
+    inputSchema: JSON.stringify(inputSchema).substring(0, 100) + '...'
   });
   
   // If the schema already has properties (but not just random_string), use those
@@ -175,16 +157,11 @@ function transformInputSchema(inputSchema: any, toolName: string): any {
     
     const properties: Record<string, any> = {};
     
-    // Convert each property in the original schema to the expected format
+    // Convert each property in the original schema to the expected format (remove descriptions)
     Object.entries(inputSchema.properties).forEach(([key, value]: [string, any]) => {
-      // Skip the random_string parameter if it exists
-      if (key === "random_string") {
-        return;
-      }
-      
       properties[key] = {
-        type: value.type || "string",
-        description: value.description || `Input parameter ${key}`
+        type: value.type || "string"
+        // Removed description field
       };
     });
     
@@ -192,40 +169,9 @@ function transformInputSchema(inputSchema: any, toolName: string): any {
     if (Object.keys(properties).length > 0) {
       return {
         type: "object",
-        properties: properties,
-        required: inputSchema.required?.filter((r: string) => r !== "random_string") || Object.keys(properties)
+        properties: properties
       };
     }
-  }
-  
-  // Handle special case for random_string or empty properties
-  
-  // For Google Search, use the actual Google Search schema
-  if (toolName.includes("Google_Search")) {
-    return {
-      type: "object",
-      properties: {
-        query: {
-          type: "string",
-          description: "Search query for Google"
-        }
-      },
-      required: ["query"]
-    };
-  }
-  
-  // For LinkedIn Profile, use the actual LinkedIn Profile schema
-  if (toolName.includes("LinkedIn_Profile")) {
-    return {
-      type: "object",
-      properties: {
-        profile_url: {
-          type: "string",
-          description: "LinkedIn profile URL to fetch data from"
-        }
-      },
-      required: ["profile_url"]
-    };
   }
   
   // For other tools, use a default input schema
@@ -233,12 +179,41 @@ function transformInputSchema(inputSchema: any, toolName: string): any {
     type: "object",
     properties: {
       input: {
-        type: "string",
-        description: "Input for the tool"
+        type: "string"
       }
-    },
-    required: ["input"]
+    }
   };
+}
+
+// Add a function to log the exact client-side format
+function logClientToolFormat(appId: string, name: string, description: string, inputSchema: any): void {
+  // Create clean properties without descriptions
+  const cleanProperties: Record<string, any> = {};
+  
+  if (inputSchema.properties) {
+    Object.entries(inputSchema.properties).forEach(([key, value]: [string, any]) => {
+      cleanProperties[key] = {
+        type: value.type || "string"
+        // No description field
+      };
+    });
+  }
+  
+  // Create an object that exactly matches what the client will receive
+  const clientFormat = {
+    name,
+    description,
+    inputSchema: {
+      type: inputSchema.type || "object",
+      properties: cleanProperties
+    }
+  };
+  
+  // Log to a separate file for client-format tools
+  writeToLogFile(`client_tool_${appId}.log`, clientFormat);
+  
+  // Also log to a consolidated file
+  writeToLogFile('client_tools.log', clientFormat, true);
 }
 
 // Register tools from app IDs
@@ -250,15 +225,14 @@ async function registerTools() {
     .map(id => id.trim())
     .filter(id => id.length > 0);
   
-  // Include default test IDs if needed
-  if (APP_IDS.length === 0) {
-    APP_IDS.push(
-      "f41a2109-2f79-4cd0-9d45-70d9f8bf71ed",
-      "b9b9967e-5f18-4bd1-ad5b-dd5e71909fd5"
-    );
-  }
-  
   log.info("Registering tools from app IDs", { appIds: APP_IDS });
+  
+  // Create a log file for all registered tools
+  writeToLogFile('registered_tools.log', {
+    timestamp: new Date().toISOString(),
+    appIds: APP_IDS,
+    message: 'Starting tool registration process'
+  }, false); // Overwrite the file at the start
   
   for (const appId of APP_IDS) {
     try {
@@ -269,6 +243,15 @@ async function registerTools() {
       
       if (!appDetails || !appDetails.data) {
         log.error("Failed to fetch app details", { appId });
+        
+        // Log the registration failure
+        writeToLogFile('registered_tools.log', {
+          timestamp: new Date().toISOString(),
+          appId,
+          status: 'failed',
+          reason: 'Failed to fetch app details'
+        });
+        
         continue;
       }
       
@@ -278,81 +261,22 @@ async function registerTools() {
       // Make sure it follows the pattern ^[a-zA-Z0-9_-]{1,64}$
       let formattedTitle = title.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '');
       
-      // Special handling for Google Search tool
-      if (title.toLowerCase().includes('google') && title.toLowerCase().includes('search')) {
-        formattedTitle = "Google_Search";
-        log.info("Special handling for Google Search tool", { 
-          originalTitle: title, 
-          formattedTitle
-        });
-        
-        // Use a properly formatted JSON schema for Google Search
-        const googleSearchSchema = {
-          type: "object",
-          properties: {
-            query: {
-              type: "string",
-              description: "Search query for Google"
-            }
-          },
-          required: ["query"],
-          additionalProperties: false
-        };
-        
-        log.info("Using custom schema for Google Search");
-        
-        try {
-          // Register the Google Search tool with our custom schema
-          server.tool(
-            formattedTitle,
-            "Give your agent the power to query Google.",
-            googleSearchSchema,
-            async (params: any) => {
-              try {
-                log.info("Executing Google Search tool", { params });
-                
-                // Ensure params is an object with a query
-                const safeParams = typeof params === 'object' && params !== null 
-                  ? params 
-                  : {};
-                
-                // Make sure we have a query parameter
-                const query = safeParams.query || "No query provided";
-                
-                log.info("Google Search query", { query });
-                
-                // Execute the app using the Wordware API
-                const result = await executeApp(appId, { query });
-                
-                if (!result) {
-                  throw new Error(`Failed to execute Google Search`);
-                }
-                
-                return result;
-              } catch (error) {
-                log.error("Error in Google Search tool", { error });
-                
-                return {
-                  content: [
-                    {
-                      type: "text",
-                      text: `Error in Google Search: ${error instanceof Error ? error.message : String(error)}`
-                    }
-                  ]
-                };
-              }
-            }
-          );
-          
-          log.info("Google Search tool registered successfully");
-          
-          // Skip the regular tool registration process
-          continue;
-        } catch (error) {
-          log.error("Error registering Google Search tool", { error });
-          // Fall through to regular registration if special handling fails
+      // Log the tool info before registration
+      writeToLogFile('registered_tools.log', {
+        timestamp: new Date().toISOString(),
+        appId,
+        status: 'processing',
+        originalTitle: title,
+        formattedTitle,
+        description,
+        // Only include type and properties for consistency
+        inputSchema: {
+          type: inputSchema?.type || "object",
+          properties: inputSchema?.properties || {}
         }
-      }
+      });
+      
+      
       
       log.info("Registering tool", { originalTitle: title, formattedTitle, appId });
       
@@ -372,18 +296,48 @@ async function registerTools() {
           required: ["query"],
           additionalProperties: false
         };
+        
+        // Log the schema creation
+        writeToLogFile('registered_tools.log', {
+          timestamp: new Date().toISOString(),
+          appId,
+          status: 'schema_created',
+          reason: 'Original schema was invalid or missing',
+          createdSchema: {
+            type: "object",
+            properties: {
+              query: {
+                type: "string"
+                // Removed description
+              }
+            }
+          }
+        });
       }
       
       // Make sure required and additionalProperties are present
       if (!formattedSchema.required || !Array.isArray(formattedSchema.required) || formattedSchema.required.length === 0) {
         formattedSchema.required = Object.keys(formattedSchema.properties || {});
+        
+        // No need to log this modification since we don't want to include required fields
       }
       if (formattedSchema.additionalProperties === undefined) {
         formattedSchema.additionalProperties = false;
+        
+        // No need to log this modification since we don't want to include additionalProperties field
       }
       
       // Transform the schema to match the expected JSON-RPC format
       const transformedSchema = transformInputSchema(formattedSchema, formattedTitle);
+      
+      // Log the schema transformation
+      writeToLogFile('registered_tools.log', {
+        timestamp: new Date().toISOString(),
+        appId,
+        status: 'schema_transformed',
+        formattedTitle,
+        inputSchema: transformedSchema // Keep only the inputSchema
+      });
       
       log.info("Using formatted schema", { 
         formattedTitle,
@@ -392,11 +346,17 @@ async function registerTools() {
       });
       
       try {
+        // Prepare a clean schema without additionalProperties and required fields
+        const cleanSchema = {
+          type: formattedSchema.type || "object",
+          properties: formattedSchema.properties || {}
+        };
+
         // Register the tool with the MCP server
         server.tool(
           formattedTitle,
           description,
-          formattedSchema, // Use the original formatted schema for registration
+          cleanSchema, // Use the clean schema without additionalProperties and required
           async (params: any) => {
             try {
               // Execute the tool with the given parameters
@@ -459,6 +419,18 @@ async function registerTools() {
           }
         );
         
+        // Log the successful registration with internal metadata
+        writeToLogFile('registered_tools.log', {
+          timestamp: new Date().toISOString(),
+          appId,
+          status: 'registered_success',
+          formattedTitle,
+          description: description.substring(0, 100) + (description.length > 100 ? '...' : '')
+        });
+        
+        // Log the exact client-side format
+        logClientToolFormat(appId, formattedTitle, description, transformedSchema);
+        
         log.info("Tool registered successfully", { title: formattedTitle });
       } catch (error) {
         log.error("Error registering tool with MCP server", { 
@@ -466,15 +438,118 @@ async function registerTools() {
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined
         });
+        
+        // Log the registration error
+        writeToLogFile('registered_tools.log', {
+          timestamp: new Date().toISOString(),
+          appId,
+          status: 'registration_error',
+          formattedTitle,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined
+        });
       }
     } catch (error) {
       log.error("Error registering tool", { appId, error });
+      
+      // Log the registration error
+      writeToLogFile('registered_tools.log', {
+        timestamp: new Date().toISOString(),
+        appId,
+        status: 'error',
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      });
     }
   }
+  
+  // Log the completion of registration
+  writeToLogFile('registered_tools.log', {
+    timestamp: new Date().toISOString(),
+    status: 'registration_completed',
+    totalTools: (server as any)._tools ? Object.keys((server as any)._tools).length : 0
+  });
+}
+
+// Patch the StdioServerTransport to intercept and log outgoing messages
+// This will let us verify what's actually being sent to the client
+let originalSend: Function | null = null;
+
+// Helper function to intercept and log stdio messages
+function patchTransport(transport: any) {
+  try {
+    if (transport && transport.send && typeof transport.send === 'function') {
+      log.info('Patching StdioServerTransport.send method for logging only');
+      originalSend = transport.send;
+      
+      transport.send = function(message: string) {
+        try {
+          // Try to parse the message to see if it contains tools
+          const parsed = JSON.parse(message);
+          
+          if (parsed && 
+              ((parsed.method === 'tools/update' && parsed.params?.tools) || 
+               (parsed.result?.tools))) {
+            
+            const tools = parsed.params?.tools || parsed.result?.tools;
+            
+            if (Array.isArray(tools) && tools.length > 0) {
+              log.info(`OUTGOING STDIO MESSAGE WITH TOOLS (${tools.length})`, {
+                method: parsed.method || 'response',
+                toolSample: JSON.stringify(tools[0]).substring(0, 300) + '...',
+                hasInputSchema: tools[0].inputSchema !== undefined,
+                schemaProperties: tools[0].inputSchema ? Object.keys(tools[0].inputSchema.properties || {}) : []
+              });
+              
+              // Log the full message to verify format
+              writeToLogFile('stdio_outgoing_tools.log', {
+                timestamp: new Date().toISOString(),
+                message: parsed
+              });
+            }
+          }
+        } catch (error) {
+          // Not JSON or other error, ignore
+        }
+        
+        // Call the original send method - don't modify the message!
+        const sendFn = originalSend as Function;
+        return sendFn.call(this, message);
+      };
+      
+      log.info('Successfully patched StdioServerTransport.send method');
+      return true;
+    }
+  } catch (error) {
+    log.error('Error patching StdioServerTransport', { error });
+  }
+  
+  return false;
+}
+
+// Clean all registered tool schemas at once
+function cleanAllRegisteredTools() {
+  // This function is removed - it was aggressively modifying schemas
+  log.info("cleanAllRegisteredTools is disabled to avoid breaking client connections");
+  return;
+}
+
+// Patch the server's registerTool method to log tools as they're registered
+function patchRegisterTool() {
+  // This function is removed - it was interfering with tool registration
+  log.info("patchRegisterTool is disabled to avoid breaking client connections");
+  return;
+}
+
+// In the patchRequest function, add special handling for rpc.discover responses
+function patchRequest() {
+  // This function is removed - it was changing rpc.discover responses
+  log.info("patchRequest is disabled to avoid breaking client connections");
+  return;
 }
 
 // Start the server
-async function main() {
+export async function main() {
   try {
     // Register tools before connecting
     await registerTools();
@@ -501,140 +576,12 @@ async function main() {
     
     // Use the stdio transport to communicate with the client
     const transport = new StdioServerTransport();
+
+    // Patch the transport to log outgoing messages, but don't modify messages
+    const patchSuccess = patchTransport(transport);
+    log.info(`Transport patch ${patchSuccess ? 'succeeded' : 'failed'}`);
     
-    // We can't modify the transport directly, so we'll add a custom handler to the server
-    const originalConnect = server.connect;
-    server.connect = async function(transport) {
-      log.info("Server connecting to transport");
-      
-      // Patch the server's request method to intercept responses
-      if ('request' in server) {
-        const originalRequest = server.request as (method: string, params: any) => Promise<any>;
-        server.request = async function(method: string, params: any) {
-          const response = await originalRequest.call(this, method, params);
-          
-          // Intercept responses that might contain tool information
-          if ((method === 'initialize' || method === 'rpc.discover') && response && response.tools) {
-            log.info(`Intercepted ${method} response with ${response.tools.length} tools`);
-            
-            // Process each tool to ensure correct schema format
-            for (let i = 0; i < response.tools.length; i++) {
-              const tool = response.tools[i];
-              const toolName = tool.name || tool.id;
-              
-              // Transform tool structure to match JSON-RPC 2.0 format
-              if (tool.schema && tool.schema.parameters) {
-                log.info(`Transforming tool structure for ${toolName}`);
-                
-                // Save the current schema parameters
-                const schemaParams = tool.schema.parameters;
-                
-                // Make sure the properties object is valid
-                if (!schemaParams.properties || typeof schemaParams.properties !== 'object') {
-                  schemaParams.properties = {};
-                }
-                
-                // Handle case where we have random_string parameter
-                if (schemaParams.properties && schemaParams.properties.random_string) {
-                  log.info(`Found random_string parameter in ${toolName}, replacing with proper schema`);
-                  
-                  // Use the transformInputSchema function to get the proper schema
-                  const properSchema = transformInputSchema({ 
-                    type: "object", 
-                    properties: schemaParams.properties,
-                    required: schemaParams.required
-                  }, toolName);
-                  
-                  // Copy over the transformed properties
-                  schemaParams.properties = properSchema.properties;
-                  schemaParams.required = properSchema.required;
-                }
-                
-                // Ensure all properties have type and description
-                for (const [propName, propValue] of Object.entries(schemaParams.properties)) {
-                  const typedPropValue = propValue as any;
-                  if (!typedPropValue.type) {
-                    typedPropValue.type = "string";
-                  }
-                  if (!typedPropValue.description) {
-                    typedPropValue.description = `Parameter: ${propName}`;
-                  }
-                }
-                
-                // Create the proper JSON-RPC 2.0 tool format with inputSchema
-                tool.inputSchema = {
-                  type: schemaParams.type || "object",
-                  properties: schemaParams.properties || {},
-                  required: schemaParams.required || Object.keys(schemaParams.properties || {})
-                };
-                
-                // Remove the old schema format if we successfully created a new inputSchema
-                if (tool.inputSchema) {
-                  delete tool.schema;
-                }
-              }
-            }
-            
-            // Finally, transform the entire response to the proper JSON-RPC 2.0 format
-            return transformResponseFormat(response, method);
-          }
-          
-          return response;
-        };
-        
-        log.info('Successfully patched server request method to intercept responses');
-      } else {
-        log.warn('Could not patch server request method - request method not available');
-      }
-      
-      // Fix any tool schemas before connecting
-      if ((server as any)._toolSchemas) {
-        log.info("Checking tool schemas before connecting");
-        
-        // Get all tool names
-        const toolNames = Object.keys((server as any)._toolSchemas);
-        
-        for (const toolName of toolNames) {
-          const schema = (server as any)._toolSchemas[toolName];
-          
-          // Check if this schema has only random_string parameter
-          if (schema.properties && 
-              schema.properties.random_string && 
-              Object.keys(schema.properties).length === 1) {
-            
-            log.info(`Tool ${toolName} has only random_string, replacing with proper schema`);
-            
-            // Get proper schema for this tool
-            const properSchema = transformInputSchema(schema, toolName);
-            
-            // Replace the schema
-            (server as any)._toolSchemas[toolName] = properSchema;
-            
-            log.info(`Replaced schema for ${toolName}`, { 
-              newProperties: Object.keys(properSchema.properties) 
-            });
-          }
-        }
-      }
-      
-      // Capture any tool schemas being exposed
-      if ((server as any)._toolSchemas) {
-        log.info("Tools being exposed during connection:", {
-          toolCount: Object.keys((server as any)._toolSchemas).length,
-          toolSchemas: Object.keys((server as any)._toolSchemas).map(name => ({
-            name,
-            properties: Object.keys((server as any)._toolSchemas[name]?.properties || {})
-          }))
-        });
-      }
-      
-      log.info(`Connecting to MCP server...`);
-      log.info(`Number of tools registered: ${Object.keys((server as any)._toolSchemas || {}).length}`);
-      
-      // Connect using the original method
-      return originalConnect.call(this, transport);
-    };
-    
+    // Don't patch server.connect, use original implementation
     await server.connect(transport);
     
     log.info("Server running");
@@ -680,7 +627,6 @@ function transformResponseFormat(response: any, method: string): any {
         let schema = tool.schema || tool.inputSchema || {
           type: "object",
           properties: {},
-          required: []
         };
         
         // If there's a schema.parameters structure, that's the actual schema
@@ -688,33 +634,26 @@ function transformResponseFormat(response: any, method: string): any {
           schema = tool.schema.parameters;
         }
         
-        // Preserve the schema, but remove any random_string parameter if it's the only one
-        if (schema.properties && 
-            schema.properties.random_string && 
-            Object.keys(schema.properties).length === 1) {
-          
-          log.info(`Tool ${toolName} has only random_string parameter, using proper schema`);
-          
-          // Use the transformInputSchema function to get the proper schema for this tool
-          schema = transformInputSchema(schema, toolName);
-        }
-        
-        // Always remove random_string if it exists among other properties
-        if (schema.properties && schema.properties.random_string) {
-          delete schema.properties.random_string;
-          if (schema.required) {
-            schema.required = schema.required.filter((r: string) => r !== "random_string");
-          }
-        }
-        
         // Format according to MCP spec
+        const cleanProperties: Record<string, any> = {};
+        
+        // Remove descriptions from properties
+        if (schema.properties) {
+          Object.entries(schema.properties).forEach(([key, value]: [string, any]) => {
+            cleanProperties[key] = {
+              type: (value as any).type || "string"
+              // No description field
+            };
+          });
+        }
+        
         return {
           name: toolName,
           description: tool.description || "",
+          // Always use inputSchema as the field name, and exclude additionalProperties and required fields
           inputSchema: {
             type: schema.type || "object",
-            properties: schema.properties || {},
-            required: schema.required || Object.keys(schema.properties || {})
+            properties: cleanProperties
           }
         };
       }),
@@ -722,12 +661,49 @@ function transformResponseFormat(response: any, method: string): any {
     }
   };
   
+  // Final safety check - go through all tools and ensure they only have inputSchema with type and properties
+  formattedResponse.result.tools.forEach((tool: any) => {
+    if (tool.inputSchema) {
+      // Make sure there's only type and properties, and remove descriptions from properties
+      const cleanProperties: Record<string, any> = {};
+      
+      if (tool.inputSchema.properties) {
+        Object.entries(tool.inputSchema.properties).forEach(([key, value]: [string, any]) => {
+          cleanProperties[key] = {
+            type: (value as any).type || "string"
+            // No description field
+          };
+        });
+      }
+      
+      const cleanSchema = {
+        type: tool.inputSchema.type || "object",
+        properties: cleanProperties
+      };
+      tool.inputSchema = cleanSchema;
+    }
+    
+    // Delete any other schema-related fields
+    if (tool.schema) delete tool.schema;
+    if (tool.parameters) delete tool.parameters;
+    
+    // Log the exact client-side format for this tool
+    writeToLogFile('client_response_tools.log', {
+      name: tool.name,
+      description: tool.description || "",
+      inputSchema: tool.inputSchema
+    });
+  });
+  
   log.info(`Response transformed to JSON-RPC 2.0 format`, {
     toolCount: formattedResponse.result.tools.length,
     sampleTool: formattedResponse.result.tools.length > 0 
       ? JSON.stringify(formattedResponse.result.tools[0]).substring(0, 200) + '...' 
       : 'No tools'
   });
+  
+  // Also log the complete client response for reference
+  writeToLogFile('client_full_response.log', formattedResponse);
   
   return formattedResponse;
 }

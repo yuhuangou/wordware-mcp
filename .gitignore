@@ -26,6 +26,3 @@ logs/
 *.swp
 *.swo
 .DS_Store 
-
-# Test tool
-testTool.ts
