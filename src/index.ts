@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { createSubLogger } from "./utils/logger.js";
-import { fetchAppDetails, executeApp } from "./utils/api.js";
+import { fetchAppDetails, executeApp, executeTool } from "./utils/api.js";
 import { writeToLogFile } from "./utils/fileLogger.js";
 
 const log = createSubLogger("index");
@@ -347,10 +347,26 @@ async function registerTools() {
       
       try {
         // Prepare a clean schema without additionalProperties and required fields
-        const cleanSchema = {
-          type: formattedSchema.type || "object",
-          properties: formattedSchema.properties || {}
-        };
+        const cleanSchema = Object.entries(formattedSchema.properties || {}).reduce((acc: Record<string, any>, [key, prop]: [string, any]) => {
+          // Map JSON schema types to zod types
+          if (prop.type === "string") {
+            acc[key] = z.string().describe(prop.description || "string input for the tool"); // provides a default description as no description exists for input parameters yet
+          } else if (prop.type === "number") {
+            acc[key] = z.number().describe(prop.description || "number input for the tool");
+          } else if (prop.type === "boolean") {
+            acc[key] = z.boolean().describe(prop.description || "boolean input for the tool");
+          } else {
+            // Default to string for unknown types
+            acc[key] = z.string().describe(prop.description || "string input for the tool");
+          }
+          return acc;
+        }, {});
+
+        // Log the resulting schema for debugging
+        log.info("cleanSchema created with Zod:", {
+          keys: Object.keys(cleanSchema),
+          sample: JSON.stringify(cleanSchema).substring(0, 100) + '...'
+        });
 
         // Register the tool with the MCP server
         server.tool(
@@ -372,37 +388,8 @@ async function registerTools() {
                 params: JSON.stringify(safeParams)
               });
               
-              try {
-                // Execute the app using the Wordware API
-                const result = await executeApp(appId, safeParams);
-                
-                if (!result) {
-                  throw new Error(`Failed to execute app ${formattedTitle}`);
-                }
-                
-                log.info("Tool execution successful", { 
-                  title: formattedTitle, 
-                  resultType: typeof result
-                });
-                
-                return result;
-              } catch (error) {
-                log.error("Error executing app", { 
-                  title: formattedTitle, 
-                  error: error instanceof Error ? error.message : String(error),
-                  stack: error instanceof Error ? error.stack : undefined
-                });
-                
-                // Return a user-friendly error message
-                return {
-                  content: [
-                    {
-                      type: "text",
-                      text: `Error executing ${formattedTitle}: ${error instanceof Error ? error.message : String(error)}`
-                    }
-                  ]
-                };
-              }
+              // Use the new executeTool function which properly formats responses
+              return await executeTool(appId, safeParams);
             } catch (error) {
               log.error("Error in tool handler", { title: formattedTitle, error });
               
@@ -651,9 +638,18 @@ function transformResponseFormat(response: any, method: string): any {
           name: toolName,
           description: tool.description || "",
           // Always use inputSchema as the field name, and exclude additionalProperties and required fields
-          inputSchema: {
-            type: schema.type || "object",
-            properties: cleanProperties
+          // inputSchema: {
+          //   type: schema.type || "object",
+          //   properties: cleanProperties
+          // }
+          input: {
+            type: "object",
+            properties: {
+              location: {
+                type: "string",
+                description: "The location of the tool"
+              }
+            }
           }
         };
       }),

@@ -676,3 +676,122 @@ async function waitForRunCompletion(runId: string): Promise<any> {
     return { error: `Error waiting for run completion: ${error instanceof Error ? error.message : String(error)}` };
   }
 }
+
+/**
+ * Executes a tool with the given parameters
+ * @param {string} appId - The ID of the Wordware app to execute
+ * @param {Object} params - The parameters from the schema
+ * @returns {Promise<Object>} - The formatted result with content structure
+ */
+export async function executeTool(appId: string, params: Record<string, any>): Promise<{ content: Array<{ type: string, text?: string, html?: string }> }> {
+  try {
+    safeLog('info', `Executing tool with app ID: ${appId}`, { params });
+    
+    // Execute the app with the provided parameters
+    const result = await executeApp(appId, params);
+    
+    // Check if there was an error
+    if (result.error) {
+      safeLog('error', `Tool execution failed`, { appId, error: result.error });
+      return {
+        content: [{ type: "text", text: `Error: ${result.error}` }]
+      };
+    }
+    
+    // Format the response
+    safeLog('info', `Successfully executed tool`, { 
+      appId, 
+      resultKeys: Object.keys(result || {})
+    });
+    
+    // Extract the actual output from nested response structures
+    let cleanedResult = result;
+    
+    // Look for output in nested objects (like search results)
+    if (typeof result === 'object' && result !== null) {
+      // Check if there's a direct output field
+      if (result.output) {
+        cleanedResult = result.output;
+      } else {
+        // Look for output in the first nested object
+        const firstKey = Object.keys(result)[0];
+        if (firstKey && typeof result[firstKey] === 'object' && result[firstKey] !== null) {
+          if (result[firstKey].output) {
+            cleanedResult = result[firstKey].output;
+          }
+        }
+      }
+    }
+    
+    // If the result already has a 'content' field with the right structure, use it
+    if (cleanedResult.content && Array.isArray(cleanedResult.content)) {
+      return { content: cleanedResult.content };
+    }
+    
+    // For markdown result
+    if (cleanedResult.markdown) {
+      return {
+        content: [{ type: "text", text: cleanedResult.markdown }]
+      };
+    }
+    
+    // For HTML result
+    if (cleanedResult.html) {
+      return {
+        content: [{ type: "html", html: cleanedResult.html }]
+      };
+    }
+    
+    // For simple text result
+    if (cleanedResult.text) {
+      return {
+        content: [{ type: "text", text: cleanedResult.text }]
+      };
+    }
+    
+    // For structured data that might need to be displayed as JSON
+    if (cleanedResult.data) {
+      return {
+        content: [{ 
+          type: "text", 
+          text: typeof cleanedResult.data === 'string' ? cleanedResult.data : JSON.stringify(cleanedResult.data, null, 2) 
+        }]
+      };
+    }
+    
+    // Handle string output directly
+    if (typeof cleanedResult === 'string') {
+      return {
+        content: [{ type: "text", text: cleanedResult }]
+      };
+    }
+    
+    // Otherwise, format the result as text content
+    let responseText: string;
+    
+    // Handle different potential result types
+    if (cleanedResult === null || cleanedResult === undefined) {
+      responseText = "No response received from the tool.";
+    } else {
+      // For objects or other types, stringify
+      responseText = JSON.stringify(cleanedResult, null, 2);
+    }
+    
+    return {
+      content: [{ type: "text", text: responseText }]
+    };
+  } catch (error) {
+    safeLog('error', `Error in tool execution`, {
+      appId,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined
+    });
+    
+    return {
+      content: [{ 
+        type: "text", 
+        text: `An error occurred while executing the tool: ${error instanceof Error ? error.message : String(error)}` 
+      }]
+    };
+  }
+}
