@@ -2,14 +2,36 @@
 
 The Wordware MCP (Master Control Program) server allows you to run your Wordware apps locally. This enables you to integrate Wordware's powerful AI flows directly into your local development environment, making it easier to test and develop applications that leverage Wordware's capabilities.
 
-## What's New in Version 1.1.0
+## What's New in Version 1.1.4
 
+- Interactive installation process with `npx wordware-mcp`
+- Automatic Claude configuration setup
 - Enhanced CLI interface with command-line argument support
 - Direct specification of API key and app IDs via parameters
 - Improved error handling and logging
 - Global installation support with simple command syntax
 
 ## Installation
+
+The easiest way to get started is using the interactive installation process:
+
+```bash
+npx wordware-mcp
+```
+
+This will guide you through:
+
+1. Entering your Wordware API key
+2. Specifying your app IDs
+3. Setting up Claude configuration (optional)
+
+After installation, you can start the MCP server with:
+
+```bash
+wordware-mcp-server
+```
+
+Alternatively, you can install manually:
 
 ```bash
 # Install from npm registry
