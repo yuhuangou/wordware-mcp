@@ -467,18 +467,9 @@ function transformResponseFormat(response: any, method: string): any {
           name: toolName,
           description: tool.description || "",
           // Always use inputSchema as the field name, and exclude additionalProperties and required fields
-          // inputSchema: {
-          //   type: schema.type || "object",
-          //   properties: cleanProperties
-          // }
-          input: {
-            type: "object",
-            properties: {
-              location: {
-                type: "string",
-                description: "The location of the tool",
-              },
-            },
+          inputSchema: {
+            type: schema.type || "object",
+            properties: cleanProperties,
           },
         };
       }),
@@ -508,6 +499,12 @@ function transformResponseFormat(response: any, method: string): any {
         properties: cleanProperties,
       };
       tool.inputSchema = cleanSchema;
+    } else if (!tool.inputSchema) {
+      // If no inputSchema exists, create a default one
+      tool.inputSchema = {
+        type: "object",
+        properties: {},
+      };
     }
 
     // Delete any other schema-related fields

@@ -5,10 +5,6 @@ try {
   const fs = await import("fs");
   const readline = await import("readline");
 
-  // Import Claude desktop integration utilities
-  const { updateClaudeConfig, isClaudeRunning, restartClaudeDesktop } =
-    await import("./claude-integration.js");
-
   // Get the directory name of the current module
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
@@ -18,6 +14,14 @@ try {
 
   // Path to the .env file
   const envPath = path.join(rootDir, ".env");
+
+  // Load environment variables from the root .env file immediately
+  // This ensures variables are loaded early in the process
+  config({ path: envPath });
+
+  // Import Claude desktop integration utilities
+  const { updateClaudeConfig, isClaudeRunning, restartClaudeDesktop } =
+    await import("./claude-integration.js");
 
   // Create a readline interface for user input
   const getUserInput = async (question: string): Promise<string> => {
@@ -127,21 +131,17 @@ try {
   if (!fs.existsSync(envPath)) {
     console.log("No .env file found. Starting configuration wizard...");
 
-    const config = await collectConfiguration();
+    const userConfig = await collectConfiguration();
 
-    const envContent = Object.entries(config)
+    const envContent = Object.entries(userConfig)
       .map(([key, value]) => `${key}=${value}`)
       .join("\n");
 
     fs.writeFileSync(envPath, envContent);
     console.log("\n✅ Configuration complete! .env file created successfully.");
-  }
 
-  // Load environment variables from the root .env file
-  const result = config({ path: envPath });
-
-  if (result.error) {
-    console.error("Error loading .env file", { error: result.error.message });
+    // Load the newly created environment variables
+    config({ path: envPath });
   } else {
     // Verify that important environment variables are loaded
     const requiredVars = ["PORT", "WORDWARE_API_KEY", "APP_IDS"];

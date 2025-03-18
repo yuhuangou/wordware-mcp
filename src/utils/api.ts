@@ -1,33 +1,3 @@
-// Flag to temporarily disable logging
-let DISABLE_LOGGING = false;
-
-// Safe logging function that respects the disable flag
-function safeLog(
-  level: "debug" | "info" | "warn" | "error",
-  message: string,
-  data?: any
-): void {
-  if (DISABLE_LOGGING) return;
-
-  switch (level) {
-    case "debug":
-      console.debug(message, data ? JSON.stringify(data) : "");
-      break;
-    case "info":
-      console.info(message, data ? JSON.stringify(data) : "");
-      break;
-    case "warn":
-      console.warn(message, data ? JSON.stringify(data) : "");
-      break;
-    case "error":
-      console.error(message, data ? JSON.stringify(data) : "");
-      break;
-  }
-}
-
-// Get API key from environment
-const WORDWARE_API_KEY = process.env.WORDWARE_API_KEY || "";
-
 export type StreamCallback = (content: any) => void;
 
 // Define interfaces for the Wordware API responses
@@ -40,7 +10,6 @@ export interface WordwareRunResponse {
       version: string;
       inputs: Record<string, any>;
       outputs?: Record<string, any>;
-      error?: string;
       startedAt: string;
       completedAt?: string;
     };
@@ -138,10 +107,6 @@ function sanitizeAndParseStreamResponse(line: string): any | null {
     ) {
       return null;
     }
-
-    // Parse the JSON
-    const parsed = JSON.parse(line);
-    return parsed;
   } catch (error) {
     return null;
   }
@@ -154,6 +119,12 @@ export async function makeWordwareRequest<T = WordwareRunResponse>(
   onStream?: StreamCallback
 ): Promise<T | null> {
   try {
+    // Get the API key from environment variables at execution time
+    const WORDWARE_API_KEY = process.env.WORDWARE_API_KEY;
+    if (!WORDWARE_API_KEY) {
+      throw new Error("WORDWARE_API_KEY environment variable is not set");
+    }
+
     // Update to use the new API endpoint format
     const url = `https://api.wordware.ai/v1/apps/${appId}/runs`;
 
@@ -176,9 +147,6 @@ export async function makeWordwareRequest<T = WordwareRunResponse>(
     if (!response.ok) {
       const errorStatus = response.status;
       const errorText = await response.text();
-      throw new Error(
-        `HTTP error! status: ${response.status}, body: ${errorText}`
-      );
     }
 
     // Parse the initial response to get the run ID and stream token
@@ -187,12 +155,9 @@ export async function makeWordwareRequest<T = WordwareRunResponse>(
     const runId = initialResponse.data?.id;
     const streamUrl = initialResponse.data?.links?.stream;
 
-    if (!runId) {
-      throw new Error("Missing run ID in response");
-    }
-
     if (onStream && streamUrl) {
       // Handle streaming response
+
       const streamResponse = await fetch(streamUrl, {
         headers: {
           Authorization: `Bearer ${WORDWARE_API_KEY}`,
@@ -223,10 +188,13 @@ export async function makeWordwareRequest<T = WordwareRunResponse>(
               const line = buffer.join("").trim();
               if (line) {
                 lineCount++;
+
                 const content = sanitizeAndParseStreamResponse(line);
                 if (content) {
                   onStream(content);
+                } else {
                 }
+              } else {
               }
               buffer = [];
             } else {
@@ -242,6 +210,7 @@ export async function makeWordwareRequest<T = WordwareRunResponse>(
       }
     } else {
       // For non-streaming response, poll the run endpoint until completion
+
       const pollUrl = `https://api.wordware.ai/v1/runs/${runId}`;
       let isCompleted = false;
       let result: WordwareRunResponse | null = null;
@@ -285,6 +254,12 @@ export async function fetchAppDetails(
   appId: string
 ): Promise<AppDetails | null> {
   try {
+    // Get the API key from environment variables at execution time
+    const WORDWARE_API_KEY = process.env.WORDWARE_API_KEY;
+    if (!WORDWARE_API_KEY) {
+      throw new Error("WORDWARE_API_KEY environment variable is not set");
+    }
+
     const response = await fetch(`https://api.wordware.ai/v1/apps/${appId}`, {
       method: "GET",
       headers: {
@@ -294,10 +269,13 @@ export async function fetchAppDetails(
     });
 
     if (!response.ok) {
+      const errorText = await response.text();
+
       return null;
     }
 
-    const appDetails = (await response.json()) as AppDetails;
+    const appDetails: AppDetails = await response.json();
+
     return appDetails;
   } catch (error) {
     return null;
@@ -315,30 +293,63 @@ export async function executeApp(
   inputs: Record<string, any>
 ): Promise<any> {
   try {
-    // Format the request body
+    // Get the API key from environment variables at execution time
+    const WORDWARE_API_KEY = process.env.WORDWARE_API_KEY;
+    if (!WORDWARE_API_KEY) {
+      throw new Error("WORDWARE_API_KEY environment variable is not set");
+    }
+
+    // Ensure inputs is a valid object
+    const safeInputs =
+      typeof inputs === "object" && inputs !== null ? inputs : {};
+
+    // Construct the request body according to the API format
     const requestBody = {
-      version: "1.0", // Default version
-      inputs: inputs || {},
+      data: {
+        type: "runs",
+        attributes: {
+          version: "1.0",
+          inputs: safeInputs,
+        },
+      },
     };
 
-    // Make the API request
-    const response = await makeWordwareRequest(appId, requestBody);
+    const response = await fetch(
+      `https://api.wordware.ai/v1/apps/${appId}/runs`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${WORDWARE_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      }
+    );
 
-    if (!response || !response.data || !response.data.attributes) {
-      return { error: "Failed to execute app" };
+    if (!response.ok) {
+      const errorText = await response.text();
+
+      return { error: `API error: ${response.status} ${response.statusText}` };
     }
 
-    const status = response.data.attributes.status;
+    const result = (await response.json()) as RunResponse;
 
-    if (status === "succeeded") {
-      return response.data.attributes.outputs || {};
-    } else {
-      return {
-        error: response.data.attributes.error || "Unknown error",
-      };
+    // Check if the app has already completed
+    if (
+      result.data?.attributes?.status === "completed" &&
+      result.data?.attributes?.outputs
+    ) {
+      return result.data.attributes.outputs;
     }
+
+    // Wait for completion
+    return await waitForRunCompletion(result.data.id);
   } catch (error) {
-    return { error: "Failed to execute app: " + String(error) };
+    return {
+      error: `Execution error: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
   }
 }
 
@@ -348,50 +359,50 @@ export async function executeApp(
  * @returns The outputs of the run or null if it failed
  */
 async function waitForRunCompletion(runId: string): Promise<any> {
-  // Initialize max retries and delay
-  const MAX_RETRIES = 30;
-  const DELAY_MS = 1000;
-  let retryCount = 0;
+  try {
+    // Get the API key from environment variables at execution time
+    const WORDWARE_API_KEY = process.env.WORDWARE_API_KEY;
+    if (!WORDWARE_API_KEY) {
+      throw new Error("WORDWARE_API_KEY environment variable is not set");
+    }
 
-  while (retryCount < MAX_RETRIES) {
-    try {
-      // Make request to check run status
+    // Poll the API every 2 seconds for up to 60 seconds (30 attempts)
+    for (let attempt = 0; attempt < 30; attempt++) {
+      // Wait for 2 seconds
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
       const response = await fetch(`https://api.wordware.ai/v1/runs/${runId}`, {
+        method: "GET",
         headers: {
           Authorization: `Bearer ${WORDWARE_API_KEY}`,
+          "Content-Type": "application/json",
         },
       });
 
       if (!response.ok) {
-        // Wait before retrying
-        await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
-        retryCount++;
-        continue;
+        const errorText = await response.text();
+
+        continue; // Continue trying if there's an error
       }
 
-      // Parse response
-      const runData = (await response.json()) as RunResponse;
-      const status = runData.data?.attributes?.status;
+      const result = (await response.json()) as RunResponse;
+      const status = result.data?.attributes?.status;
 
-      // Check if run is complete
-      if (status === "succeeded") {
-        return runData.data?.attributes?.outputs || {};
+      if (status === "completed" && result.data?.attributes?.outputs) {
+        return result.data.attributes.outputs;
       } else if (status === "failed") {
-        return { error: runData.data?.attributes?.error || "Run failed" };
+        return { error: "Run failed" };
       }
-
-      // If still processing, wait and retry
-      await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
-      retryCount++;
-    } catch (error) {
-      // Wait before retrying
-      await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
-      retryCount++;
     }
-  }
 
-  // If we reach this point, we've exceeded max retries
-  return { error: "Timeout waiting for run completion" };
+    return { error: "Run timed out" };
+  } catch (error) {
+    return {
+      error: `Error waiting for run completion: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
 }
 
 /**
