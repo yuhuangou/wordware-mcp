@@ -245,282 +245,277 @@ export async function makeWordwareRequest<T = WordwareRunResponse>(
   }
 }
 
-/**
- * Fetches app details from the Wordware API
- * @param appId The ID of the app to fetch details for
- * @returns The app details or null if the request failed
- */
-export async function fetchAppDetails(
-  appId: string
-): Promise<AppDetails | null> {
+// Updated to use new JSON-RPC API endpoint
+export async function fetchAvailableTools(): Promise<any> {
   try {
-    // Get the API key from environment variables at execution time
+    // Get the API key from environment variables
     const WORDWARE_API_KEY = process.env.WORDWARE_API_KEY;
     if (!WORDWARE_API_KEY) {
       throw new Error("WORDWARE_API_KEY environment variable is not set");
     }
 
-    const response = await fetch(`https://api.wordware.ai/v1/apps/${appId}`, {
-      method: "GET",
+    // Use the new endpoint format - direct access to RPC endpoint
+    const url = `http://localhost:9000/${WORDWARE_API_KEY}/rpc`;
+
+    const response = await fetch(url, {
+      method: "POST",
       headers: {
-        Authorization: `Bearer ${WORDWARE_API_KEY}`,
         "Content-Type": "application/json",
       },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+        params: {
+          cursor: null,
+        },
+      }),
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-
-      return null;
+      throw new Error(`Error fetching available tools: ${response.status}`);
     }
 
-    const appDetails: AppDetails = await response.json();
-
-    return appDetails;
+    const data = await response.json();
+    return data;
   } catch (error) {
+    // console.error("Failed to fetch available tools:", error);
     return null;
   }
 }
 
-/**
- * Executes a Wordware app with the given inputs
- * @param appId The ID of the app to execute
- * @param inputs The inputs to pass to the app
- * @returns The result of the execution or null if it failed
- */
-export async function executeApp(
-  appId: string,
-  inputs: Record<string, any>
-): Promise<any> {
+// Legacy function that now uses the new API endpoint
+export async function fetchAppDetails(
+  appId: string
+): Promise<AppDetails | null> {
   try {
-    // Get the API key from environment variables at execution time
-    const WORDWARE_API_KEY = process.env.WORDWARE_API_KEY;
-    if (!WORDWARE_API_KEY) {
-      throw new Error("WORDWARE_API_KEY environment variable is not set");
+    // Call the new function to get all tools
+    const toolsResponse = await fetchAvailableTools();
+
+    if (
+      !toolsResponse ||
+      !toolsResponse.result ||
+      !toolsResponse.result.tools
+    ) {
+      return null;
     }
 
-    // Ensure inputs is a valid object
-    const safeInputs =
-      typeof inputs === "object" && inputs !== null ? inputs : {};
+    // Find the tool with matching name or ID
+    const tool = toolsResponse.result.tools.find(
+      (t: any) => t.name === appId || t.id === appId
+    );
 
-    // Construct the request body according to the API format
-    const requestBody = {
+    if (!tool) {
+      return null;
+    }
+
+    // Transform the tool data to match the expected AppDetails format
+    return {
       data: {
-        type: "runs",
+        id: appId,
+        type: "app",
         attributes: {
-          version: "1.0",
-          inputs: safeInputs,
+          title: tool.name,
+          description: tool.description || "",
+          inputSchema: tool.inputSchema || {
+            type: "object",
+            additionalProperties: false,
+            properties: {},
+            required: [],
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {},
+            required: [],
+          },
+        },
+        links: {
+          self: "",
+        },
+        relationships: {
+          versions: {
+            links: {
+              related: "",
+            },
+          },
+          latestVersion: {
+            links: {
+              related: "",
+            },
+          },
         },
       },
     };
-
-    const response = await fetch(
-      `https://api.wordware.ai/v1/apps/${appId}/runs`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${WORDWARE_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(requestBody),
-      }
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-
-      return { error: `API error: ${response.status} ${response.statusText}` };
-    }
-
-    const result = (await response.json()) as RunResponse;
-
-    // Check if the app has already completed
-    if (
-      result.data?.attributes?.status === "completed" &&
-      result.data?.attributes?.outputs
-    ) {
-      return result.data.attributes.outputs;
-    }
-
-    // Wait for completion
-    return await waitForRunCompletion(result.data.id);
   } catch (error) {
-    return {
-      error: `Execution error: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    };
+    // console.error("Failed to fetch app details:", error);
+    return null;
   }
 }
 
-/**
- * Waits for a run to complete by polling the API
- * @param runId The ID of the run to wait for
- * @returns The outputs of the run or null if it failed
- */
-async function waitForRunCompletion(runId: string): Promise<any> {
+// Updated to use new API endpoint
+export async function executeApp(
+  toolName: string,
+  inputs: Record<string, any>
+): Promise<any> {
   try {
-    // Get the API key from environment variables at execution time
+    // Get the API key from environment variables
     const WORDWARE_API_KEY = process.env.WORDWARE_API_KEY;
     if (!WORDWARE_API_KEY) {
       throw new Error("WORDWARE_API_KEY environment variable is not set");
     }
 
-    // Poll the API every 2 seconds for up to 60 seconds (30 attempts)
-    for (let attempt = 0; attempt < 30; attempt++) {
-      // Wait for 2 seconds
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Use the new endpoint format with the /rpc endpoint
+    const url = `http://localhost:9000/${WORDWARE_API_KEY}/rpc`;
 
-      const response = await fetch(`https://api.wordware.ai/v1/runs/${runId}`, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${WORDWARE_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-      });
+    // Use the direct tool execution method with the tool name
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: toolName,
+        params: inputs,
+      }),
+    });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-
-        continue; // Continue trying if there's an error
-      }
-
-      const result = (await response.json()) as RunResponse;
-      const status = result.data?.attributes?.status;
-
-      if (status === "completed" && result.data?.attributes?.outputs) {
-        return result.data.attributes.outputs;
-      } else if (status === "failed") {
-        return { error: "Run failed" };
-      }
+    if (!response.ok) {
+      throw new Error(`Error executing tool: ${response.status}`);
     }
 
-    return { error: "Run timed out" };
+    const data = await response.json();
+
+    // Check for JSON-RPC error
+    if (data.error) {
+      throw new Error(`JSON-RPC error: ${data.error.message}`);
+    }
+
+    return data.result;
   } catch (error) {
-    return {
-      error: `Error waiting for run completion: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    };
+    // console.error(`Failed to execute tool ${toolName}:`, error);
+    throw error;
   }
 }
 
-/**
- * Executes a tool with the given parameters
- * @param {string} appId - The ID of the Wordware app to execute
- * @param {Object} params - The parameters from the schema
- * @returns {Promise<Object>} - The formatted result with content structure
- */
+// Updated to work with the new tools API
 export async function executeTool(
   appId: string,
   params: Record<string, any>
 ): Promise<{ content: Array<{ type: string; text?: string; html?: string }> }> {
   try {
-    // Execute the app with the provided parameters
     const result = await executeApp(appId, params);
 
-    // Check if there was an error
-    if (result.error) {
-      return {
-        content: [{ type: "text", text: `Error: ${result.error}` }],
-      };
-    }
-
-    // Extract the actual output from nested response structures
-    let cleanedResult = result;
-
-    // Look for output in nested objects (like search results)
-    if (typeof result === "object" && result !== null) {
-      // Check if there's a direct output field
-      if (result.output) {
-        cleanedResult = result.output;
-      } else {
-        // Look for output in the first nested object
-        const firstKey = Object.keys(result)[0];
-        if (
-          firstKey &&
-          typeof result[firstKey] === "object" &&
-          result[firstKey] !== null
-        ) {
-          if (result[firstKey].output) {
-            cleanedResult = result[firstKey].output;
-          }
-        }
-      }
-    }
-
-    // If the result already has a 'content' field with the right structure, use it
-    if (cleanedResult.content && Array.isArray(cleanedResult.content)) {
-      return { content: cleanedResult.content };
-    }
-
-    // For markdown result
-    if (cleanedResult.markdown) {
-      return {
-        content: [{ type: "text", text: cleanedResult.markdown }],
-      };
-    }
-
-    // For HTML result
-    if (cleanedResult.html) {
-      return {
-        content: [{ type: "html", html: cleanedResult.html }],
-      };
-    }
-
-    // For simple text result
-    if (cleanedResult.text) {
-      return {
-        content: [{ type: "text", text: cleanedResult.text }],
-      };
-    }
-
-    // For structured data that might need to be displayed as JSON
-    if (cleanedResult.data) {
-      return {
-        content: [
-          {
-            type: "text",
-            text:
-              typeof cleanedResult.data === "string"
-                ? cleanedResult.data
-                : JSON.stringify(cleanedResult.data, null, 2),
-          },
-        ],
-      };
-    }
-
-    // Handle string output directly
-    if (typeof cleanedResult === "string") {
-      return {
-        content: [{ type: "text", text: cleanedResult }],
-      };
-    }
-
-    // Otherwise, format the result as text content
-    let responseText: string;
-
-    // Handle different potential result types
-    if (cleanedResult === null || cleanedResult === undefined) {
-      responseText = "No response received from the tool.";
-    } else {
-      // For objects or other types, stringify
-      responseText = JSON.stringify(cleanedResult, null, 2);
-    }
-
+    // Format the response to match the expected MCP format
     return {
-      content: [{ type: "text", text: responseText }],
+      content: [
+        {
+          type: "text",
+          text:
+            typeof result === "string"
+              ? result
+              : JSON.stringify(result, null, 2),
+        },
+      ],
     };
   } catch (error) {
     return {
       content: [
         {
           type: "text",
-          text: `An error occurred while executing the tool: ${
+          text: `Error executing tool ${appId}: ${
             error instanceof Error ? error.message : String(error)
           }`,
         },
       ],
     };
+  }
+}
+
+// Add a health check function to test the API connection
+export async function checkApiHealth(): Promise<boolean> {
+  try {
+    // Get the API key from environment variables
+    const WORDWARE_API_KEY = process.env.WORDWARE_API_KEY;
+    if (!WORDWARE_API_KEY) {
+      throw new Error("WORDWARE_API_KEY environment variable is not set");
+    }
+
+    // Try both endpoints - first the worker health endpoint
+    const workerHealthUrl = `http://localhost:9000/api/health`;
+    try {
+      const workerResponse = await fetch(workerHealthUrl);
+      if (workerResponse.ok) {
+        const data = await workerResponse.json();
+        if (data.status === "ok") {
+          // console.log("API worker health check successful");
+          return true;
+        }
+      }
+    } catch (workerError) {
+      // console.error("Worker health check failed:", workerError);
+    }
+
+    // Then try the durable object health endpoint
+    const doHealthUrl = `http://localhost:9000/${WORDWARE_API_KEY}/health`;
+    try {
+      const doResponse = await fetch(doHealthUrl);
+      if (doResponse.ok) {
+        const data = await doResponse.json();
+        if (data.status === "ok") {
+          // console.log("API durable object health check successful");
+          return true;
+        }
+      }
+    } catch (doError) {
+      // console.error("Durable object health check failed:", doError);
+    }
+
+    // Both health checks failed
+    return false;
+  } catch (error) {
+    // console.error("Health check error:", error);
+    return false;
+  }
+}
+
+// Add a function to test the ping method
+export async function pingApi(): Promise<boolean> {
+  try {
+    // Get the API key from environment variables
+    const WORDWARE_API_KEY = process.env.WORDWARE_API_KEY;
+    if (!WORDWARE_API_KEY) {
+      throw new Error("WORDWARE_API_KEY environment variable is not set");
+    }
+
+    const url = `http://localhost:9000/${WORDWARE_API_KEY}/rpc`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "ping",
+      }),
+    });
+
+    if (!response.ok) {
+      return false;
+    }
+
+    const data = await response.json();
+    if (data.result && data.result.status === "pong") {
+      // console.log("API ping successful");
+      return true;
+    }
+
+    return false;
+  } catch (error) {
+    // console.error("Ping error:", error);
+    return false;
   }
 }

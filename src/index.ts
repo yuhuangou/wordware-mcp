@@ -4,7 +4,14 @@ import "./utils/dotenv-config.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { fetchAppDetails, executeApp, executeTool } from "./utils/api.js";
+import {
+  fetchAppDetails,
+  executeApp,
+  executeTool,
+  fetchAvailableTools,
+  checkApiHealth,
+  pingApi,
+} from "./utils/api.js";
 
 // Create server instance with proper configuration
 const server = new McpServer({
@@ -186,42 +193,43 @@ function logClientToolFormat(
   };
 }
 
-// Register tools from app IDs
+// Register tools from the API
 export async function registerTools() {
-  // Get app IDs from environment
-  const APP_IDS = (process.env.APP_IDS || "")
-    .split(",")
-    .map((id) => id.trim())
-    .filter((id) => id.length > 0);
+  try {
+    // Fetch available tools from the new endpoint
+    const toolsResponse = await fetchAvailableTools();
 
-  // Process each app ID
-  for (const appId of APP_IDS) {
-    try {
-      // Fetch app details from API
-      const appDetails = await fetchAppDetails(appId);
+    if (
+      !toolsResponse ||
+      !toolsResponse.result ||
+      !toolsResponse.result.tools ||
+      !Array.isArray(toolsResponse.result.tools)
+    ) {
+      // console.error(
+      //   "Failed to fetch available tools or invalid response format"
+      // );
+      return;
+    }
 
-      if (!appDetails || !appDetails.data) {
-        continue;
-      }
+    // Process each tool from the API response
+    for (const tool of toolsResponse.result.tools) {
+      try {
+        // Check if the tool has the required name
+        if (!tool.name) {
+          // console.error("Tool missing name property, skipping");
+          continue;
+        }
 
-      const { title, description, inputSchema } = appDetails.data.attributes;
+        // Format the tool name to ensure MCP compatibility
+        // Make sure it follows the pattern ^[a-zA-Z0-9_-]{1,64}$
+        let formattedTitle = tool.name
+          .replace(/\s+/g, "_")
+          .replace(/[^a-zA-Z0-9_-]/g, "");
 
-      // Format the tool name to ensure MCP compatibility
-      // Make sure it follows the pattern ^[a-zA-Z0-9_-]{1,64}$
-      let formattedTitle = title
-        .replace(/\s+/g, "_")
-        .replace(/[^a-zA-Z0-9_-]/g, "");
+        const description = tool.description || "";
 
-      // Ensure the input schema has the correct format for MCP
-      let formattedSchema = inputSchema;
-
-      // If the schema is not well-formed, create a default one
-      if (
-        !formattedSchema ||
-        !formattedSchema.type ||
-        !formattedSchema.properties
-      ) {
-        formattedSchema = {
+        // Get the input schema from the tool
+        let formattedSchema = tool.inputSchema || {
           type: "object",
           properties: {
             query: {
@@ -232,98 +240,99 @@ export async function registerTools() {
           required: ["query"],
           additionalProperties: false,
         };
-      }
 
-      // Make sure required and additionalProperties are present
-      if (
-        !formattedSchema.required ||
-        !Array.isArray(formattedSchema.required) ||
-        formattedSchema.required.length === 0
-      ) {
-        formattedSchema.required = Object.keys(
-          formattedSchema.properties || {}
+        // Add required field if missing
+        if (!formattedSchema.required) {
+          formattedSchema.required = Object.keys(
+            formattedSchema.properties || {}
+          );
+        }
+
+        // Add additionalProperties if missing
+        if (formattedSchema.additionalProperties === undefined) {
+          formattedSchema.additionalProperties = false;
+        }
+
+        // Transform the schema to match the expected JSON-RPC format
+        const transformedSchema = transformInputSchema(
+          formattedSchema,
+          formattedTitle
         );
-      }
-      if (formattedSchema.additionalProperties === undefined) {
-        formattedSchema.additionalProperties = false;
-      }
 
-      // Transform the schema to match the expected JSON-RPC format
-      const transformedSchema = transformInputSchema(
-        formattedSchema,
-        formattedTitle
-      );
-
-      try {
-        // Prepare a clean schema without additionalProperties and required fields
-        const cleanSchema = Object.entries(
-          formattedSchema.properties || {}
-        ).reduce((acc: Record<string, any>, [key, prop]: [string, any]) => {
-          // Map JSON schema types to zod types
-          if (prop.type === "string") {
-            acc[key] = z
-              .string()
-              .describe(prop.description || "string input for the tool"); // provides a default description as no description exists for input parameters yet
-          } else if (prop.type === "number") {
-            acc[key] = z
-              .number()
-              .describe(prop.description || "number input for the tool");
-          } else if (prop.type === "boolean") {
-            acc[key] = z
-              .boolean()
-              .describe(prop.description || "boolean input for the tool");
-          } else {
-            // Default to string for unknown types
-            acc[key] = z
-              .string()
-              .describe(prop.description || "string input for the tool");
-          }
-          return acc;
-        }, {});
-
-        // Register the tool with the MCP server
-        server.tool(
-          formattedTitle,
-          description,
-          cleanSchema, // Use the clean schema without additionalProperties and required
-          async (params: any) => {
-            try {
-              // Execute the tool with the given parameters
-              // Ensure params is an object
-              const safeParams =
-                typeof params === "object" && params !== null ? params : {};
-
-              // Use the new executeTool function which properly formats responses
-              return await executeTool(appId, safeParams);
-            } catch (error) {
-              // Return a user-friendly error message rather than throwing
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `Error in ${formattedTitle} handler: ${
-                      error instanceof Error ? error.message : String(error)
-                    }`,
-                  },
-                ],
-              };
+        try {
+          // Prepare a clean schema for zod
+          const cleanSchema = Object.entries(
+            formattedSchema.properties || {}
+          ).reduce((acc: Record<string, any>, [key, prop]: [string, any]) => {
+            // Map JSON schema types to zod types
+            if (prop.type === "string") {
+              acc[key] = z
+                .string()
+                .describe(prop.description || "string input for the tool");
+            } else if (prop.type === "number") {
+              acc[key] = z
+                .number()
+                .describe(prop.description || "number input for the tool");
+            } else if (prop.type === "boolean") {
+              acc[key] = z
+                .boolean()
+                .describe(prop.description || "boolean input for the tool");
+            } else {
+              // Default to string for unknown types
+              acc[key] = z
+                .string()
+                .describe(prop.description || "string input for the tool");
             }
-          }
-        );
+            return acc;
+          }, {});
 
-        // Log the exact client-side format
-        logClientToolFormat(
-          appId,
-          formattedTitle,
-          description,
-          transformedSchema
-        );
+          // Register the tool with the MCP server
+          server.tool(
+            formattedTitle,
+            description,
+            cleanSchema, // Use the clean schema without additionalProperties and required
+            async (params: any) => {
+              try {
+                // Execute the tool with the given parameters
+                // Ensure params is an object
+                const safeParams =
+                  typeof params === "object" && params !== null ? params : {};
+
+                // Use the executeTool function which properly formats responses
+                // Pass the original tool name
+                return await executeTool(tool.name, safeParams);
+              } catch (error) {
+                // Return a user-friendly error message rather than throwing
+                return {
+                  content: [
+                    {
+                      type: "text",
+                      text: `Error in ${formattedTitle} handler: ${
+                        error instanceof Error ? error.message : String(error)
+                      }`,
+                    },
+                  ],
+                };
+              }
+            }
+          );
+
+          // Log the exact client-side format
+          logClientToolFormat(
+            tool.name,
+            formattedTitle,
+            description,
+            transformedSchema
+          );
+        } catch (error) {
+          // console.error(`Failed to register tool ${formattedTitle}:`, error);
+        }
       } catch (error) {
-        // Error handling is kept but logging removed
+        // console.error("Error processing tool:", error);
       }
-    } catch (error) {
-      // Error handling is kept but logging removed
     }
+  } catch (error) {
+    // console.error("Failed to register tools:", error);
   }
 }
 
@@ -388,7 +397,29 @@ function patchRequest() {
 // Start the server
 export async function main() {
   try {
+    // console.log("Starting Wordware MCP Server...");
+
+    // Check API health before attempting to register tools
+    const isApiHealthy = await checkApiHealth();
+    if (!isApiHealthy) {
+      // console.log("Attempting to ping API...");
+      const pingSuccess = await pingApi();
+
+      if (!pingSuccess) {
+        // console.error(
+        //   "⚠️ Warning: API health check failed. The MCP server will still start, but tools may not be available."
+        // );
+        // console.error(
+        //   "Make sure the API is running at http://localhost:9000 and your API key is valid."
+        // );
+        // console.error(
+        //   "You can still start the MCP server, but it may not work correctly."
+        // );
+      }
+    }
+
     // Register tools before connecting
+    // console.log("Registering tools...");
     await registerTools();
 
     // Use the stdio transport to communicate with the client
@@ -398,9 +429,11 @@ export async function main() {
     const patchSuccess = patchTransport(transport);
 
     // Don't patch server.connect, use original implementation
+    // console.log("Connecting to transport...");
     await server.connect(transport);
+    // console.log("MCP Server started successfully");
   } catch (error) {
-    // Error handling is kept but logging removed
+    // console.error("Error starting MCP server:", error);
   }
 }
 

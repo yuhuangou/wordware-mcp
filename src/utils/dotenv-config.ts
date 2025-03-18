@@ -58,24 +58,12 @@ try {
     console.log("\n🔧 Wordware MCP Setup");
     console.log("====================");
 
-    console.log(
-      "\nTo use Wordware MCP, you need to configure your API key and app IDs."
-    );
+    console.log("\nTo use Wordware MCP, you need to configure your API key.");
 
     // Get API key
     const apiKey = await getUserInput("\n👉 Enter your Wordware API key: ");
     if (!apiKey.trim()) {
       console.error("API key is required to continue. Please try again.");
-      process.exit(1);
-    }
-
-    // Get app IDs
-    console.log("\nApp IDs should be comma-separated (e.g., app-123,app-456)");
-    const appIds = await getUserInput("👉 Enter your Wordware app IDs: ");
-    if (!appIds.trim()) {
-      console.error(
-        "At least one app ID is required to continue. Please try again."
-      );
       process.exit(1);
     }
 
@@ -88,13 +76,10 @@ try {
     );
 
     if (configClaude) {
-      // Parse app IDs from comma-separated string
-      const appIdsArray = appIds.split(",").map((id) => id.trim());
-
-      // Update Claude desktop configuration
+      // Update Claude desktop configuration with API key only
       const success = await updateClaudeConfig(
         apiKey,
-        appIdsArray,
+        [], // Empty array instead of app IDs
         port || "3000"
       );
 
@@ -122,7 +107,6 @@ try {
 
     return {
       WORDWARE_API_KEY: apiKey.trim(),
-      APP_IDS: appIds.trim(),
       PORT: port.trim() || "3000",
     };
   };
@@ -144,12 +128,9 @@ try {
     config({ path: envPath });
   } else {
     // Verify that important environment variables are loaded
-    const requiredVars = ["PORT", "WORDWARE_API_KEY", "APP_IDS"];
+    const requiredVars = ["PORT", "WORDWARE_API_KEY"];
     const missingVars = requiredVars.filter(
-      (v) =>
-        !process.env[v] ||
-        process.env[v] === "your-api-key-here" ||
-        process.env[v] === "your-app-ids-here"
+      (v) => !process.env[v] || process.env[v] === "your-api-key-here"
     );
 
     if (missingVars.length > 0) {
@@ -164,11 +145,7 @@ try {
 
       for (const [key, value] of Object.entries(newConfig)) {
         // If the variable is already in the file with a valid value, skip it
-        if (
-          process.env[key] &&
-          process.env[key] !== "your-api-key-here" &&
-          process.env[key] !== "your-app-ids-here"
-        ) {
+        if (process.env[key] && process.env[key] !== "your-api-key-here") {
           continue;
         }
 
