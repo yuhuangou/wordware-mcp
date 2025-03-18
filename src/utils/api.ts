@@ -7,27 +7,30 @@ const log = createSubLogger("api");
 let DISABLE_LOGGING = false;
 
 // Safe logging function that respects the disable flag
-function safeLog(level: 'debug' | 'info' | 'warn' | 'error', message: string, data?: any): void {
+function safeLog(
+  level: "debug" | "info" | "warn" | "error",
+  message: string,
+  data?: any
+): void {
   if (DISABLE_LOGGING) return;
-  
+
   switch (level) {
-    case 'debug':
+    case "debug":
       log.debug(message, data);
       break;
-    case 'info':
+    case "info":
       log.info(message, data);
       break;
-    case 'warn':
+    case "warn":
       log.warn(message, data);
       break;
-    case 'error':
+    case "error":
       log.error(message, data);
       break;
   }
 }
 
-const WORDWARE_API_KEY =
-  "ww-Ak3ZgfQpaNXyLFLFfton80EPikdvxWTpxrLleohCKcybK08sinGy7";
+const WORDWARE_API_KEY = process.env.WORDWARE_API_KEY || "";
 
 export type StreamCallback = (content: any) => void;
 
@@ -127,19 +130,21 @@ function sanitizeAndParseStreamResponse(line: string): any | null {
     if (!line || !line.trim()) {
       return null;
     }
-    
+
     // Check if the line starts with a log prefix and skip it
-    if (line.match(/^\[.*?\] \[.*?\] \[.*?\]/) || 
-        line.startsWith('INFO:') || 
-        line.startsWith('DEBUG:') || 
-        line.startsWith('WARN:') || 
-        line.startsWith('ERROR:')) {
+    if (
+      line.match(/^\[.*?\] \[.*?\] \[.*?\]/) ||
+      line.startsWith("INFO:") ||
+      line.startsWith("DEBUG:") ||
+      line.startsWith("WARN:") ||
+      line.startsWith("ERROR:")
+    ) {
       return null;
     }
-    
+
     // Temporarily disable logging during JSON parsing
     DISABLE_LOGGING = true;
-    
+
     try {
       // Try to parse the JSON
       const parsed = JSON.parse(line);
@@ -151,10 +156,10 @@ function sanitizeAndParseStreamResponse(line: string): any | null {
   } catch (error) {
     // Re-enable logging in case of error
     DISABLE_LOGGING = false;
-    
-    safeLog('error', `Failed to parse stream response`, { 
-      linePreview: line.substring(0, 100) + (line.length > 100 ? '...' : ''),
-      error: error instanceof Error ? error.message : String(error)
+
+    safeLog("error", `Failed to parse stream response`, {
+      linePreview: line.substring(0, 100) + (line.length > 100 ? "..." : ""),
+      error: error instanceof Error ? error.message : String(error),
     });
     return null;
   }
@@ -169,27 +174,27 @@ export async function makeWordwareRequest<T = WordwareRunResponse>(
   try {
     // Update to use the new API endpoint format
     const url = `https://api.wordware.ai/v1/apps/${appId}/runs`;
-    safeLog('info', `API REQUEST`, { 
+    safeLog("info", `API REQUEST`, {
       url,
-      appId, 
-      method: 'POST',
+      appId,
+      method: "POST",
       inputKeys: Object.keys(body.inputs || {}),
-      version: body.version
+      version: body.version,
     });
-    
+
     // Format the request body according to the new API format
     const requestBody = JSON.stringify({
       version: body.version || "1.0",
-      inputs: body.inputs || {}
+      inputs: body.inputs || {},
     });
-    safeLog('info', "REQUEST BODY", { requestBody });
-    
+    safeLog("info", "REQUEST BODY", { requestBody });
+
     const response = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         // Include the Authorization header with the API key
-        "Authorization": `Bearer ${WORDWARE_API_KEY}`,
+        Authorization: `Bearer ${WORDWARE_API_KEY}`,
       },
       body: requestBody,
     });
@@ -197,52 +202,54 @@ export async function makeWordwareRequest<T = WordwareRunResponse>(
     if (!response.ok) {
       const errorStatus = response.status;
       const errorText = await response.text();
-      safeLog('error', "HTTP ERROR FROM API", { 
+      safeLog("error", "HTTP ERROR FROM API", {
         status: errorStatus,
         statusText: response.statusText,
-        responseText: errorText
+        responseText: errorText,
       });
-      throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
+      throw new Error(
+        `HTTP error! status: ${response.status}, body: ${errorText}`
+      );
     }
 
-    safeLog('info', "RECEIVED API RESPONSE", { 
+    safeLog("info", "RECEIVED API RESPONSE", {
       status: response.status,
-      contentType: response.headers.get('content-type')
+      contentType: response.headers.get("content-type"),
     });
 
     // Parse the initial response to get the run ID and stream token
-    const initialResponse = await response.json() as WordwareRunResponse;
-    safeLog('info', "INITIAL RESPONSE", {
+    const initialResponse = (await response.json()) as WordwareRunResponse;
+    safeLog("info", "INITIAL RESPONSE", {
       responseType: typeof initialResponse,
-      responseKeys: Object.keys(initialResponse || {})
+      responseKeys: Object.keys(initialResponse || {}),
     });
 
     const runId = initialResponse.data?.id;
     const streamUrl = initialResponse.data?.links?.stream;
 
     if (!runId) {
-      safeLog('error', "MISSING RUN ID IN RESPONSE", { initialResponse });
+      safeLog("error", "MISSING RUN ID IN RESPONSE", { initialResponse });
       throw new Error("Missing run ID in response");
     }
 
-    safeLog('info', "RUN DETAILS", {
+    safeLog("info", "RUN DETAILS", {
       runId,
-      hasStreamUrl: !!streamUrl
+      hasStreamUrl: !!streamUrl,
     });
 
     if (onStream && streamUrl) {
       // Handle streaming response
-      safeLog('info', "PROCESSING STREAMED RESPONSE", { streamUrl });
-      
+      safeLog("info", "PROCESSING STREAMED RESPONSE", { streamUrl });
+
       const streamResponse = await fetch(streamUrl, {
         headers: {
-          "Authorization": `Bearer ${WORDWARE_API_KEY}`,
-        }
+          Authorization: `Bearer ${WORDWARE_API_KEY}`,
+        },
       });
       if (!streamResponse.ok) {
-        safeLog('error', "STREAM FETCH ERROR", {
+        safeLog("error", "STREAM FETCH ERROR", {
           status: streamResponse.status,
-          statusText: streamResponse.statusText
+          statusText: streamResponse.statusText,
         });
         throw new Error(`Stream fetch error: ${streamResponse.status}`);
       }
@@ -257,35 +264,41 @@ export async function makeWordwareRequest<T = WordwareRunResponse>(
         while (true) {
           const { done, value } = await reader.read();
           if (done) {
-            safeLog('info', "STREAM FINISHED", { totalChunks: chunkCount, totalLines: lineCount });
+            safeLog("info", "STREAM FINISHED", {
+              totalChunks: chunkCount,
+              totalLines: lineCount,
+            });
             break;
           }
 
           chunkCount++;
           const chunk = decoder.decode(value);
-          safeLog('info', `RECEIVED RAW CHUNK #${chunkCount}`, { 
+          safeLog("info", `RECEIVED RAW CHUNK #${chunkCount}`, {
             chunkSize: chunk.length,
-            chunkPreview: chunk.substring(0, 50) + (chunk.length > 50 ? '...' : '')
+            chunkPreview:
+              chunk.substring(0, 50) + (chunk.length > 50 ? "..." : ""),
           });
-          
+
           for (let i = 0; i < chunk.length; i++) {
             if (chunk[i] === "\n") {
               const line = buffer.join("").trim();
               if (line) {
                 lineCount++;
-                safeLog('info', `PROCESSING LINE #${lineCount}`, { 
+                safeLog("info", `PROCESSING LINE #${lineCount}`, {
                   lineLength: line.length,
                 });
-                
+
                 const content = sanitizeAndParseStreamResponse(line);
                 if (content) {
-                  safeLog('info', "CALLING STREAM CALLBACK WITH CONTENT");
+                  safeLog("info", "CALLING STREAM CALLBACK WITH CONTENT");
                   onStream(content);
                 } else {
-                  safeLog('warn', "NULL CONTENT FROM STREAM LINE", { line: line.substring(0, 50) });
+                  safeLog("warn", "NULL CONTENT FROM STREAM LINE", {
+                    line: line.substring(0, 50),
+                  });
                 }
               } else {
-                safeLog('info', "EMPTY LINE IN STREAM, SKIPPING");
+                safeLog("info", "EMPTY LINE IN STREAM, SKIPPING");
               }
               buffer = [];
             } else {
@@ -293,71 +306,74 @@ export async function makeWordwareRequest<T = WordwareRunResponse>(
             }
           }
         }
-        safeLog('info', "STREAM PROCESSING COMPLETE");
+        safeLog("info", "STREAM PROCESSING COMPLETE");
         return null;
       } catch (streamError) {
-        safeLog('error', "STREAM PROCESSING ERROR", { 
-          error: streamError instanceof Error ? streamError.message : String(streamError),
-          stack: streamError instanceof Error ? streamError.stack : undefined
+        safeLog("error", "STREAM PROCESSING ERROR", {
+          error:
+            streamError instanceof Error
+              ? streamError.message
+              : String(streamError),
+          stack: streamError instanceof Error ? streamError.stack : undefined,
         });
         return null;
       } finally {
         reader.releaseLock();
-        safeLog('info', "STREAM READER RELEASED");
+        safeLog("info", "STREAM READER RELEASED");
       }
     } else {
       // For non-streaming response, poll the run endpoint until completion
-      safeLog('info', "POLLING FOR RUN COMPLETION");
-      
+      safeLog("info", "POLLING FOR RUN COMPLETION");
+
       const pollUrl = `https://api.wordware.ai/v1/runs/${runId}`;
       let isCompleted = false;
       let result: WordwareRunResponse | null = null;
-      
+
       while (!isCompleted) {
-        safeLog('info', "POLLING RUN STATUS", { pollUrl });
-        
+        safeLog("info", "POLLING RUN STATUS", { pollUrl });
+
         const pollResponse = await fetch(pollUrl, {
           headers: {
-            "Authorization": `Bearer ${WORDWARE_API_KEY}`,
-          }
+            Authorization: `Bearer ${WORDWARE_API_KEY}`,
+          },
         });
         if (!pollResponse.ok) {
-          safeLog('error', "POLL ERROR", {
+          safeLog("error", "POLL ERROR", {
             status: pollResponse.status,
-            statusText: pollResponse.statusText
+            statusText: pollResponse.statusText,
           });
           throw new Error(`Poll error: ${pollResponse.status}`);
         }
-        
-        const pollData = await pollResponse.json() as WordwareRunResponse;
-        safeLog('info', "POLL RESPONSE", {
+
+        const pollData = (await pollResponse.json()) as WordwareRunResponse;
+        safeLog("info", "POLL RESPONSE", {
           status: pollData.data?.attributes?.status,
-          hasOutputs: !!pollData.data?.attributes?.outputs
+          hasOutputs: !!pollData.data?.attributes?.outputs,
         });
-        
+
         if (pollData.data?.attributes?.status === "completed") {
           isCompleted = true;
           result = pollData;
         } else if (pollData.data?.attributes?.status === "failed") {
-          safeLog('error', "RUN FAILED", { pollData });
+          safeLog("error", "RUN FAILED", { pollData });
           throw new Error("Run failed");
         } else {
           // Wait before polling again
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          await new Promise((resolve) => setTimeout(resolve, 1000));
         }
       }
-      
-      safeLog('info', "RUN COMPLETED", {
+
+      safeLog("info", "RUN COMPLETED", {
         resultType: typeof result,
-        resultKeys: result ? Object.keys(result) : []
+        resultKeys: result ? Object.keys(result) : [],
       });
-      
+
       return result as unknown as T;
     }
   } catch (error) {
-    safeLog('error', "API REQUEST ERROR", { 
+    safeLog("error", "API REQUEST ERROR", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined
+      stack: error instanceof Error ? error.stack : undefined,
     });
     return null;
   }
@@ -368,61 +384,67 @@ export async function makeWordwareRequest<T = WordwareRunResponse>(
  * @param appId The ID of the app to fetch details for
  * @returns The app details or null if the request failed
  */
-export async function fetchAppDetails(appId: string): Promise<AppDetails | null> {
+export async function fetchAppDetails(
+  appId: string
+): Promise<AppDetails | null> {
   try {
-    safeLog('info', `Fetching app details for app ID: ${appId}`);
-    
+    safeLog("info", `Fetching app details for app ID: ${appId}`);
+
     const response = await fetch(`https://api.wordware.ai/v1/apps/${appId}`, {
-      method: 'GET',
+      method: "GET",
       headers: {
-        'Authorization': `Bearer ${WORDWARE_API_KEY}`,
-        'Content-Type': 'application/json'
-      }
+        Authorization: `Bearer ${WORDWARE_API_KEY}`,
+        "Content-Type": "application/json",
+      },
     });
-    
+
     if (!response.ok) {
       const errorText = await response.text();
-      safeLog('error', `Failed to fetch app details: ${response.status} ${response.statusText}`, { error: errorText });
-      
+      safeLog(
+        "error",
+        `Failed to fetch app details: ${response.status} ${response.statusText}`,
+        { error: errorText }
+      );
+
       // Log the error response to a file
       logApiResponse(appId, {
         status: response.status,
         statusText: response.statusText,
         error: errorText,
         timestamp: new Date().toISOString(),
-        endpoint: `https://api.wordware.ai/v1/apps/${appId}`
+        endpoint: `https://api.wordware.ai/v1/apps/${appId}`,
       });
-      
+
       return null;
     }
-    
+
     const appDetails: AppDetails = await response.json();
-    safeLog('info', `Successfully fetched app details`, { 
+    safeLog("info", `Successfully fetched app details`, {
       title: appDetails.data.attributes.title,
-      appId 
+      appId,
     });
-    
+
     // Log the successful response to a file
     logApiResponse(appId, {
       success: true,
       timestamp: new Date().toISOString(),
       endpoint: `https://api.wordware.ai/v1/apps/${appId}`,
-      appDetails
+      appDetails,
     });
-    
+
     return appDetails;
   } catch (error) {
-    safeLog('error', `Error fetching app details`, { appId, error });
-    
+    safeLog("error", `Error fetching app details`, { appId, error });
+
     // Log the error to a file
     logApiResponse(appId, {
       success: false,
       timestamp: new Date().toISOString(),
       endpoint: `https://api.wordware.ai/v1/apps/${appId}`,
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined
+      stack: error instanceof Error ? error.stack : undefined,
     });
-    
+
     return null;
   }
 }
@@ -433,122 +455,140 @@ export async function fetchAppDetails(appId: string): Promise<AppDetails | null>
  * @param inputs The inputs to pass to the app
  * @returns The result of the execution or null if it failed
  */
-export async function executeApp(appId: string, inputs: Record<string, any>): Promise<any> {
+export async function executeApp(
+  appId: string,
+  inputs: Record<string, any>
+): Promise<any> {
   try {
-    safeLog('info', `Executing app with ID: ${appId}`, { inputs });
-    
+    safeLog("info", `Executing app with ID: ${appId}`, { inputs });
+
     // Ensure inputs is a valid object
-    const safeInputs = typeof inputs === 'object' && inputs !== null ? inputs : {};
-    
+    const safeInputs =
+      typeof inputs === "object" && inputs !== null ? inputs : {};
+
     // Construct the request body according to the API format
     const requestBody = {
       data: {
         type: "runs",
         attributes: {
           version: "1.0",
-          inputs: safeInputs
-        }
-      }
+          inputs: safeInputs,
+        },
+      },
     };
-    
-    safeLog('debug', `Request body for app execution`, { 
+
+    safeLog("debug", `Request body for app execution`, {
       requestBody: JSON.stringify(requestBody),
-      appId
+      appId,
     });
-    
+
     // Log the request payload to a file
     logApiResponse(appId, {
-      type: 'execution_request',
+      type: "execution_request",
       timestamp: new Date().toISOString(),
       endpoint: `https://api.wordware.ai/v1/apps/${appId}/runs`,
-      requestBody
+      requestBody,
     });
-    
-    const response = await fetch(`https://api.wordware.ai/v1/apps/${appId}/runs`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${WORDWARE_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(requestBody)
-    });
-    
+
+    const response = await fetch(
+      `https://api.wordware.ai/v1/apps/${appId}/runs`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${WORDWARE_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      }
+    );
+
     if (!response.ok) {
       const errorText = await response.text();
-      safeLog('error', `Failed to execute app: ${response.status} ${response.statusText}`, { 
-        error: errorText,
-        appId
-      });
-      
+      safeLog(
+        "error",
+        `Failed to execute app: ${response.status} ${response.statusText}`,
+        {
+          error: errorText,
+          appId,
+        }
+      );
+
       // Log the error response to a file
       logApiResponse(appId, {
-        type: 'execution_error',
+        type: "execution_error",
         status: response.status,
         statusText: response.statusText,
         error: errorText,
         timestamp: new Date().toISOString(),
-        endpoint: `https://api.wordware.ai/v1/apps/${appId}/runs`
+        endpoint: `https://api.wordware.ai/v1/apps/${appId}/runs`,
       });
-      
+
       return { error: `API error: ${response.status} ${response.statusText}` };
     }
-    
-    const result = await response.json() as RunResponse;
-    safeLog('info', `Successfully started app execution`, { 
+
+    const result = (await response.json()) as RunResponse;
+    safeLog("info", `Successfully started app execution`, {
       appId,
       runId: result.data?.id,
-      status: result.data?.attributes?.status
+      status: result.data?.attributes?.status,
     });
-    
+
     // Log the successful response to a file
     logApiResponse(appId, {
-      type: 'execution_response',
+      type: "execution_response",
       success: true,
       timestamp: new Date().toISOString(),
       endpoint: `https://api.wordware.ai/v1/apps/${appId}/runs`,
       runId: result.data?.id,
-      status: result.data?.attributes?.status
+      status: result.data?.attributes?.status,
     });
-    
+
     // Check if the app has already completed
-    if (result.data?.attributes?.status === 'completed' && result.data?.attributes?.outputs) {
-      safeLog('info', `App execution completed immediately`, { 
+    if (
+      result.data?.attributes?.status === "completed" &&
+      result.data?.attributes?.outputs
+    ) {
+      safeLog("info", `App execution completed immediately`, {
         appId,
         runId: result.data?.id,
-        outputKeys: Object.keys(result.data.attributes.outputs)
+        outputKeys: Object.keys(result.data.attributes.outputs),
       });
-      
+
       // Log the outputs to a file
       logApiResponse(appId, {
-        type: 'execution_completed',
+        type: "execution_completed",
         timestamp: new Date().toISOString(),
         runId: result.data?.id,
-        outputs: result.data.attributes.outputs
+        outputs: result.data.attributes.outputs,
       });
-      
+
       return result.data.attributes.outputs;
     }
-    
+
     // Wait for completion
     return await waitForRunCompletion(result.data.id);
   } catch (error) {
-    safeLog('error', `Error executing app`, { 
-      appId, 
+    safeLog("error", `Error executing app`, {
+      appId,
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined
+      stack: error instanceof Error ? error.stack : undefined,
     });
-    
+
     // Log the error to a file
     logApiResponse(appId, {
-      type: 'execution_exception',
+      type: "execution_exception",
       success: false,
       timestamp: new Date().toISOString(),
       endpoint: `https://api.wordware.ai/v1/apps/${appId}/runs`,
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined
+      stack: error instanceof Error ? error.stack : undefined,
     });
-    
-    return { error: `Execution error: ${error instanceof Error ? error.message : String(error)}` };
+
+    return {
+      error: `Execution error: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
   }
 }
 
@@ -559,121 +599,134 @@ export async function executeApp(appId: string, inputs: Record<string, any>): Pr
  */
 async function waitForRunCompletion(runId: string): Promise<any> {
   try {
-    safeLog('info', `Waiting for run completion`, { runId });
-    
+    safeLog("info", `Waiting for run completion`, { runId });
+
     // Poll the API every 2 seconds for up to 60 seconds (30 attempts)
     for (let attempt = 0; attempt < 30; attempt++) {
       // Wait for 2 seconds
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
       // Check the run status
-      safeLog('debug', `Polling run status (attempt ${attempt + 1}/30)`, { runId });
-      
-      const response = await fetch(`https://api.wordware.ai/v1/runs/${runId}`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${WORDWARE_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
+      safeLog("debug", `Polling run status (attempt ${attempt + 1}/30)`, {
+        runId,
       });
-      
+
+      const response = await fetch(`https://api.wordware.ai/v1/runs/${runId}`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${WORDWARE_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+      });
+
       if (!response.ok) {
         const errorText = await response.text();
-        safeLog('warn', `Failed to check run status: ${response.status} ${response.statusText}`, { 
-          runId, 
-          error: errorText,
-          attempt: attempt + 1 
-        });
-        
+        safeLog(
+          "warn",
+          `Failed to check run status: ${response.status} ${response.statusText}`,
+          {
+            runId,
+            error: errorText,
+            attempt: attempt + 1,
+          }
+        );
+
         // Log the polling error to a file
         logApiResponse(runId, {
-          type: 'polling_error',
+          type: "polling_error",
           status: response.status,
           statusText: response.statusText,
           error: errorText,
           timestamp: new Date().toISOString(),
           endpoint: `https://api.wordware.ai/v1/runs/${runId}`,
-          attempt: attempt + 1
+          attempt: attempt + 1,
         });
-        
+
         continue; // Continue trying if there's an error
       }
-      
-      const result = await response.json() as RunResponse;
+
+      const result = (await response.json()) as RunResponse;
       const status = result.data?.attributes?.status;
-      
-      safeLog('debug', `Run status: ${status}`, { runId, attempt: attempt + 1 });
-      
+
+      safeLog("debug", `Run status: ${status}`, {
+        runId,
+        attempt: attempt + 1,
+      });
+
       // Log the polling result to a file
       logApiResponse(runId, {
-        type: 'polling_response',
+        type: "polling_response",
         timestamp: new Date().toISOString(),
         endpoint: `https://api.wordware.ai/v1/runs/${runId}`,
         attempt: attempt + 1,
         status,
-        hasOutputs: !!result.data?.attributes?.outputs
+        hasOutputs: !!result.data?.attributes?.outputs,
       });
-      
-      if (status === 'completed' && result.data?.attributes?.outputs) {
-        safeLog('info', `Run completed successfully`, { 
-          runId, 
-          outputKeys: Object.keys(result.data.attributes.outputs || {})
+
+      if (status === "completed" && result.data?.attributes?.outputs) {
+        safeLog("info", `Run completed successfully`, {
+          runId,
+          outputKeys: Object.keys(result.data.attributes.outputs || {}),
         });
-        
+
         // Log the successful completion to a file
         logApiResponse(runId, {
-          type: 'polling_completed',
+          type: "polling_completed",
           timestamp: new Date().toISOString(),
           endpoint: `https://api.wordware.ai/v1/runs/${runId}`,
           attempt: attempt + 1,
-          outputs: result.data.attributes.outputs
+          outputs: result.data.attributes.outputs,
         });
-        
+
         return result.data.attributes.outputs;
-      } else if (status === 'failed') {
-        safeLog('error', `Run failed`, { runId });
-        
+      } else if (status === "failed") {
+        safeLog("error", `Run failed`, { runId });
+
         // Log the failure to a file
         logApiResponse(runId, {
-          type: 'polling_failed',
+          type: "polling_failed",
           timestamp: new Date().toISOString(),
           endpoint: `https://api.wordware.ai/v1/runs/${runId}`,
           attempt: attempt + 1,
-          status: 'failed'
+          status: "failed",
         });
-        
-        return { error: 'Run failed' };
+
+        return { error: "Run failed" };
       }
     }
-    
-    safeLog('error', `Run timed out`, { runId });
-    
+
+    safeLog("error", `Run timed out`, { runId });
+
     // Log the timeout to a file
     logApiResponse(runId, {
-      type: 'polling_timeout',
+      type: "polling_timeout",
       timestamp: new Date().toISOString(),
       endpoint: `https://api.wordware.ai/v1/runs/${runId}`,
-      message: 'Run timed out after 30 attempts (60 seconds)'
+      message: "Run timed out after 30 attempts (60 seconds)",
     });
-    
-    return { error: 'Run timed out' };
+
+    return { error: "Run timed out" };
   } catch (error) {
-    safeLog('error', `Error waiting for run completion`, { 
-      runId, 
+    safeLog("error", `Error waiting for run completion`, {
+      runId,
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined
+      stack: error instanceof Error ? error.stack : undefined,
     });
-    
+
     // Log the error to a file
     logApiResponse(runId, {
-      type: 'polling_exception',
+      type: "polling_exception",
       timestamp: new Date().toISOString(),
       endpoint: `https://api.wordware.ai/v1/runs/${runId}`,
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined
+      stack: error instanceof Error ? error.stack : undefined,
     });
-    
-    return { error: `Error waiting for run completion: ${error instanceof Error ? error.message : String(error)}` };
+
+    return {
+      error: `Error waiting for run completion: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
   }
 }
 
@@ -683,92 +736,104 @@ async function waitForRunCompletion(runId: string): Promise<any> {
  * @param {Object} params - The parameters from the schema
  * @returns {Promise<Object>} - The formatted result with content structure
  */
-export async function executeTool(appId: string, params: Record<string, any>): Promise<{ content: Array<{ type: string, text?: string, html?: string }> }> {
+export async function executeTool(
+  appId: string,
+  params: Record<string, any>
+): Promise<{ content: Array<{ type: string; text?: string; html?: string }> }> {
   try {
-    safeLog('info', `Executing tool with app ID: ${appId}`, { params });
-    
+    safeLog("info", `Executing tool with app ID: ${appId}`, { params });
+
     // Execute the app with the provided parameters
     const result = await executeApp(appId, params);
-    
+
     // Check if there was an error
     if (result.error) {
-      safeLog('error', `Tool execution failed`, { appId, error: result.error });
+      safeLog("error", `Tool execution failed`, { appId, error: result.error });
       return {
-        content: [{ type: "text", text: `Error: ${result.error}` }]
+        content: [{ type: "text", text: `Error: ${result.error}` }],
       };
     }
-    
+
     // Format the response
-    safeLog('info', `Successfully executed tool`, { 
-      appId, 
-      resultKeys: Object.keys(result || {})
+    safeLog("info", `Successfully executed tool`, {
+      appId,
+      resultKeys: Object.keys(result || {}),
     });
-    
+
     // Extract the actual output from nested response structures
     let cleanedResult = result;
-    
+
     // Look for output in nested objects (like search results)
-    if (typeof result === 'object' && result !== null) {
+    if (typeof result === "object" && result !== null) {
       // Check if there's a direct output field
       if (result.output) {
         cleanedResult = result.output;
       } else {
         // Look for output in the first nested object
         const firstKey = Object.keys(result)[0];
-        if (firstKey && typeof result[firstKey] === 'object' && result[firstKey] !== null) {
+        if (
+          firstKey &&
+          typeof result[firstKey] === "object" &&
+          result[firstKey] !== null
+        ) {
           if (result[firstKey].output) {
             cleanedResult = result[firstKey].output;
           }
         }
       }
     }
-    
+
     // If the result already has a 'content' field with the right structure, use it
     if (cleanedResult.content && Array.isArray(cleanedResult.content)) {
       return { content: cleanedResult.content };
     }
-    
+
     // For markdown result
     if (cleanedResult.markdown) {
       return {
-        content: [{ type: "text", text: cleanedResult.markdown }]
+        content: [{ type: "text", text: cleanedResult.markdown }],
       };
     }
-    
+
     // For HTML result
     if (cleanedResult.html) {
       return {
-        content: [{ type: "html", html: cleanedResult.html }]
+        content: [{ type: "html", html: cleanedResult.html }],
       };
     }
-    
+
     // For simple text result
     if (cleanedResult.text) {
       return {
-        content: [{ type: "text", text: cleanedResult.text }]
+        content: [{ type: "text", text: cleanedResult.text }],
       };
     }
-    
+
     // For structured data that might need to be displayed as JSON
     if (cleanedResult.data) {
       return {
-        content: [{ 
-          type: "text", 
-          text: typeof cleanedResult.data === 'string' ? cleanedResult.data : JSON.stringify(cleanedResult.data, null, 2) 
-        }]
+        content: [
+          {
+            type: "text",
+            text:
+              typeof cleanedResult.data === "string"
+                ? cleanedResult.data
+                : JSON.stringify(cleanedResult.data, null, 2),
+          },
+        ],
       };
     }
-    
+
     // Handle string output directly
-    if (typeof cleanedResult === 'string') {
+    if (typeof cleanedResult === "string") {
       return {
-        content: [{ type: "text", text: cleanedResult }]
+        content: [{ type: "text", text: cleanedResult }],
       };
     }
-    
+
     // Otherwise, format the result as text content
     let responseText: string;
-    
+
     // Handle different potential result types
     if (cleanedResult === null || cleanedResult === undefined) {
       responseText = "No response received from the tool.";
@@ -776,22 +841,26 @@ export async function executeTool(appId: string, params: Record<string, any>): P
       // For objects or other types, stringify
       responseText = JSON.stringify(cleanedResult, null, 2);
     }
-    
+
     return {
-      content: [{ type: "text", text: responseText }]
+      content: [{ type: "text", text: responseText }],
     };
   } catch (error) {
-    safeLog('error', `Error in tool execution`, {
+    safeLog("error", `Error in tool execution`, {
       appId,
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined
+      stack: error instanceof Error ? error.stack : undefined,
     });
-    
+
     return {
-      content: [{ 
-        type: "text", 
-        text: `An error occurred while executing the tool: ${error instanceof Error ? error.message : String(error)}` 
-      }]
+      content: [
+        {
+          type: "text",
+          text: `An error occurred while executing the tool: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        },
+      ],
     };
   }
 }
