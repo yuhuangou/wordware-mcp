@@ -1,23 +1,42 @@
 {
-  "name": "@wordware/mcp",
-  "version": "1.0.0",
+  "name": "wordware-mcp",
+  "version": "1.1.3",
+  "description": "Model Context Protoco; (MCP) server for accessing Wordware apps",
   "main": "build/index.js",
   "type": "module",
   "bin": {
-    "wordware": "./build/index.js"
+    "wordware-mcp": "build/cli.js"
   },
   "scripts": {
-    "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
+    "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755') && require('fs').chmodSync('build/cli.js', '755')\"",
     "start": "node build/index.js",
-    "dev": "node --no-warnings build/index.js"
+    "dev": "node --no-warnings build/index.js",
+    "prepublishOnly": "npm run build",
+    "install-global": "npm run build && npm install -g .",
+    "publish-package": "npm run build && npm publish"
   },
   "files": [
-    "build"
+    "build",
+    "README.md",
+    "LICENSE"
   ],
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "keywords": [
+    "wordware",
+    "ai",
+    "mcp",
+    "claude",
+    "master-control-program"
+  ],
+  "author": "Wordware",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yuhuangou/wordware-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yuhuangou/wordware-mcp/issues"
+  },
+  "homepage": "https://github.com/yuhuangou/wordware-mcp#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.5.0",
     "dotenv": "^16.4.5",
@@ -26,5 +45,8 @@
   "devDependencies": {
     "@types/node": "^22.13.4",
     "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

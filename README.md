@@ -2,60 +2,159 @@
 
 The Wordware MCP (Master Control Program) server allows you to run your Wordware apps locally. This enables you to integrate Wordware's powerful AI flows directly into your local development environment, making it easier to test and develop applications that leverage Wordware's capabilities.
 
-## Create an account
+## What's New in Version 1.1.0
+
+- Enhanced CLI interface with command-line argument support
+- Direct specification of API key and app IDs via parameters
+- Improved error handling and logging
+- Global installation support with simple command syntax
+
+## Installation
+
+```bash
+# Install from npm registry
+npm install -g wordware-mcp
+
+# Or install locally in your project
+npm install wordware-mcp
+
+# Or clone this repository and install globally
+git clone https://github.com/yuhuangou/wordware-mcp.git
+cd wordware-mcp
+npm run install-global
+```
+
+## Prerequisites
+
+Before using this package, you need:
+
+1. A Wordware account (sign up at [wordware.ai](http://wordware.ai))
+2. A Wordware API key
+3. At least one deployed Wordware app
+
+## Basic Usage
+
+### As a global command
+
+If installed globally, you can run in one of two ways:
+
+```bash
+# Option 1: Create an .env file in your current directory first (see Configuration section)
+wordware-mcp
+
+# Option 2: Pass parameters directly via command line
+wordware-mcp --api-key your-api-key --app-ids your-app-id-1,your-app-id-2 --port 3000
+```
+
+### Command Line Options
+
+```
+Options:
+  --api-key, -k <key>      Wordware API key (required unless in .env file)
+  --app-ids, -a <ids>      Comma-separated list of app IDs (required unless in .env file)
+  --port, -p <port>        Port to run the server on (default: 3000)
+  --help, -h               Show this help message
+```
+
+### As a package in your project
+
+```javascript
+// In your script
+import { startMCP } from "wordware-mcp";
+
+// Start the MCP server
+startMCP();
+```
+
+## Configuration
+
+You can configure the MCP server in two ways:
+
+### 1. Environment Variables or .env File
+
+Create a `.env` file with the following variables:
+
+```
+WORDWARE_API_KEY=your-api-key
+APP_IDS=["your-app-id-1", "your-app-id-2"]
+PORT=3000
+```
+
+### 2. Command Line Arguments
+
+Pass the configuration directly when running the command:
+
+```bash
+wordware-mcp -k your-api-key -a your-app-id-1,your-app-id-2 -p 3000
+```
+
+Or with multiple app IDs as separate arguments:
+
+```bash
+wordware-mcp -k your-api-key -a your-app-id-1 your-app-id-2 your-app-id-3
+```
+
+## Creating Your Wordware Setup
+
+### Create an account
 
 To start, you'll need a Wordware account. Head to [wordware.ai](http://wordware.ai), sign in and create an account
 
-## Create an API key
+### Create an API key
 
 For your wordware flows to be accessible via MCP, you'll need to create an API key. For that, click on your profile picture in the top right corner > API keys > Create a new key > Copy your key
 
-## Create an app
+### Create an app
 
 Now it's time to get creative. Create a wordware app for whatever you want to achieve, or feel free to fork an app from the explore page (https://app.wordware.ai/explore).
 
-## Deploy your app
+### Deploy your app
 
 For your app to be triggered as MCP, you'll need to deploy it. To do that, head to your app. You should see a "Deploy" button in the top right corner. Then head to the deployment page.
 
-## Get the `app_id`
+### Get the `app_id`
 
 On the deployment page, you'll see your deployment url: `https://app.wordware.ai/explore/apps/{app_id}`. Get your app_id from there
 
-## Clone the github repo
+## Using with Claude Desktop
 
-Clone the repo and get started with your local MCP server!
+To use this MCP server with Claude Desktop:
 
-## Populate the `.env` file
+1. Make sure Claude for Desktop is installed
+2. Modify the Claude desktop config file located at:
+   `~/Library/Application\ Support/Claude/claude_desktop_config.json`
 
-Rename the `.env.example` file to `.env` and populate it with your own values.
-
-- `WORDWARE_API_KEY`={your-api-key you got from the previous step}
-- `APP_IDS`={array of your app ids}
-
-## Build the server
-
-Install dependencies with `npm install` and build the server with `npm run build`.
-
-## Modify your Claude desktop config file
-
-You need to have Claude for Desktop installed to test the server. If you do, you need to modify the config file to use the MCP server. The claude desktop config should be located here:
-
-`~/Library/Application\ Support/Claude/claude_desktop_config.json`
-
-Then, add the following to the file (make sure to replace `/ABSOLUTE/PATH/TO/PARENT/FOLDER/wordware-mcp/build/index.js` with the absolute path to the `index.js` file in the `build` folder of this repository):
+3. Add the following to the file:
 
 ```json
 {
   "mcpServers": {
     "wordware": {
-      "command": "node",
-      "args": ["/ABSOLUTE/PATH/TO/PARENT/FOLDER/wordware-mcp/build/index.js"]
+      "command": "wordware-mcp"
     }
   }
 }
 ```
 
-## Have fun!
+## Development
 
-Now you can have fun with your local MCP server!
+If you want to contribute to this package:
+
+```bash
+# Clone the repository
+git clone https://github.com/yuhuangou/wordware-mcp.git
+cd wordware-mcp
+
+# Install dependencies
+npm install
+
+# Build the package
+npm run build
+
+# Run in development mode
+npm run dev
+```
+
+## License
+
+MIT
