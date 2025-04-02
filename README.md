@@ -1,6 +1,6 @@
 # wordware-mcp
 
-The Wordware MCP (Master Control Program) server allows you to run your Wordware apps locally. This enables you to integrate Wordware's powerful AI flows directly into your local development environment, making it easier to test and develop applications that leverage Wordware's capabilities.
+The Wordware MCP (Model Context Protocol) server allows you to run your Wordware apps locally. This enables you to integrate Wordware's powerful AI flows directly into your local development environment, making it easier to test and develop applications that leverage Wordware's capabilities.
 
 ## What's New in Version 1.1.5
 
@@ -50,7 +50,7 @@ npm install -g wordware-mcp
 npm install wordware-mcp
 
 # Or clone this repository and install globally
-git clone https://github.com/yuhuangou/wordware-mcp.git
+git clone https://github.com/{username}/wordware-mcp.git
 cd wordware-mcp
 npm run install-global
 ```
